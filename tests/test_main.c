@@ -7,6 +7,7 @@
 #include <string.h>
 #include <math.h>
 #include "../src/internal.h"
+extern int run_sys_tests(void);
 
 int g_fail = 0;
 int g_run  = 0;
@@ -797,6 +798,7 @@ int main(void)
     test_dot3_bump();
     test_envmap();
     test_hiqtc_p8();
+    if (run_sys_tests()) g_fail++;
 
     printf("\n%d verificações, %d falhas\n", g_run, g_fail);
     return g_fail ? 1 : 0;
