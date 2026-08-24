@@ -38,9 +38,11 @@ static inline MapuScalar mapu_mul(MapuScalar a, MapuScalar b)
 }
 static inline MapuScalar mapu_div(MapuScalar a, MapuScalar b)
 {
-    int64_t t = ((int64_t)a << 32);         /* <<16 extra para precisão */
-    if (b == 0) return (MapuScalar)0x7FFFFFFF;
-    return (MapuScalar)(t / (int64_t)b);
+    if (b == 0) return (a >= 0) ? 0x7FFFFFFF : (MapuScalar)0x80000000;
+    int64_t t = ((int64_t)a << 16) / (int64_t)b;
+    if (t > 0x7FFFFFFF) return 0x7FFFFFFF;
+    if (t < -0x80000000LL) return (MapuScalar)0x80000000;
+    return (MapuScalar)t;
 }
 
 /* ---- 3-vetores Q16 ------------------------------------------------ */
