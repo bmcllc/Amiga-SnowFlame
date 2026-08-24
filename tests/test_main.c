@@ -8,8 +8,8 @@
 #include <math.h>
 #include "../src/internal.h"
 
-static int g_fail = 0;
-static int g_run  = 0;
+int g_fail = 0;
+int g_run  = 0;
 
 #define CHECK(cond, msg)                                                    \
     do {                                                                    \
@@ -776,6 +776,7 @@ static void test_hiqtc_p8(void)
     }
 }
 
+extern void test_mapu(void);
 int main(void)
 {
     printf("== Hot-ice: suíte de testes ==\n");
@@ -791,6 +792,7 @@ int main(void)
     test_mipmap_chain();
     test_trilinear_levels();
     test_stencil();
+    test_mapu();
     test_quat();
     test_dot3_bump();
     test_envmap();

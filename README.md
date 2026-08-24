@@ -21,7 +21,8 @@ demos que gravam PNG.
 | API HGL (matrizes, texturas, stencil, stats, PNG out) | ✅ | `include/hotice/hgl.h` |
 | HDE: T&L — DOT3 bump (normal map, luz por pixel) | ✅ | `raster.c`, `hde.c` |
 | Env map esférico (sphere map via normal view-space) | ✅ | `raster.c`, `hde.c` |
-| Testes automatizados | ✅ **38/38** | `tests/test_main.c` |
+| MAPU — Unidade de Física Analítica (CORDIC, ATAN2, EXP2/LOG2, ROOT2, RAYSP/TEVNT/TRAJC/SPRG) | ✅ | `src/mapu.c`, `include/hotice/mapu.h` |
+| Testes automatizados | ✅ **57/57** | `tests/test_main.c` |
 
 ## Build
 
@@ -41,6 +42,7 @@ make run-demos  # gera build/demo0{1..4}.png
 | `demo04_reflection` | reflexão planar via stencil multipasse | centroides obj≈refl; limitado ao espelho |
 | `demo05_shading` | bump ON/OFF + esfera cromada env map | tons parede 5 → 81 (luz por pixel) |
 | `demo06_hiqtc_p8` | RGBA8 × HIQTC-4:1 × HIQTC-P8 | baseline 138 dB · HIQTC 38.4 dB · P8 33.2 dB |
+| `demo07_mapu` | projétil TRAJC vs esfera (RAYSP) + chão (TEVNT) | t_chao=1.618s · hit esfera dt=3.895 → acerto |
 | `demo02_hiqtc` | mesma cena RGBA8 vs HIQTC lado a lado | PSNR impresso ≈ 34.2 dB |
 | `demo03_mipmap` | campo distante sem mip vs trilinear | Laplaciano médio 131 → 62 (~2.1× mais suave) |
 | `demo04_reflection` | reflexão planar via stencil multipasse intra-frame | centróides obj/refl ≈ iguais; reflexo confinado ao espelho |
@@ -63,6 +65,9 @@ make run-demos  # gera build/demo0{1..4}.png
 - CPU SnowFlame: ColdFire V4æ (V4e Amiga Enhanced) com unidades MontêLauro
   MLVU (vetores · versores · ponto fixo quantizado) e MAPU (física analítica).
   Ver `../../ColdFire-V4ae-cpu-dossie.md` (raiz do projeto SnowFlame).
+- MAPU implementado como referência host (ponto flutuante) validando a especificação
+  Q16.16 do dossiê V4æ; a versão fixa determinística é descrita no microcode
+  do MAPU (CORDIC 16 iterações, aritmética saturada).
 
 ## Próximos passos (roadmap)
 
