@@ -35,12 +35,29 @@ hglTex *hglTexCreateHIQTCFromRGBA8(int w, int h, const uint32_t *pixels_packed)
     return t;
 }
 
+hglTex *hglTexCreateHIQTCP8FromRGBA8(int w, int h, const uint32_t *pixels_packed)
+{
+    hglTex *t = hglTexCreateRGBA8(w, h, pixels_packed);
+    uint8_t *idx;
+    int ncol;
+    if (!t) return NULL;
+    idx = NULL;
+    ncol = hi_hiqtc_p8_encode(w, h, pixels_packed, &idx, t->pal);
+    if (ncol <= 0 || !idx) { hglTexDestroy(t); return NULL; }
+    free(t->pix);
+    t->pix = NULL;
+    t->p8 = idx;
+    t->fmt = HI_FMT_HIQTC_P8;
+    return t;
+}
+
 void hglTexDestroy(hglTex *tex)
 {
     int i;
     if (!tex) return;
     free(tex->pix);
     free(tex->hiq);
+    free(tex->p8);
     if (tex->lv) {
         for (i = 0; i < tex->nlevels; i++) free(tex->lv[i]);
         free(tex->lv);
@@ -89,6 +106,9 @@ int hglTexGenerateMipmaps(hglTex *tex)
 
     if (tex->fmt == HI_FMT_HIQTC) {
         base = hi_hiqtc_decode_all(tex);
+        if (!base) return -1;
+    } else if (tex->fmt == HI_FMT_HIQTC_P8) {
+        base = hi_hiqtc_p8_decode_all(tex);
         if (!base) return -1;
     } else {
         base = (uint32_t *)malloc(sizeof(uint32_t) *
@@ -147,6 +167,8 @@ static uint32_t fetch_wrapped(const hglTex *t, int x, int y)
     }
     if (t->fmt == HI_FMT_HIQTC)
         return hi_hiqtc_decode_texel(t, x, y);
+    if (t->fmt == HI_FMT_HIQTC_P8)
+        return hi_hiqtc_p8_decode_texel(t, x, y);
     return t->pix[(size_t)y * t->w + x];
 }
 

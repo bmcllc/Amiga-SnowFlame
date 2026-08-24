@@ -10,7 +10,8 @@ LIB_SRCS := src/context.c src/hde.c src/raster.c src/texture.c \
 LIB_OBJS := $(LIB_SRCS:src/%.c=build/%.o)
 
 DEMOS := build/demo01_tbr_morph build/demo02_hiqtc \
-         build/demo03_mipmap build/demo04_reflection
+         build/demo03_mipmap build/demo04_reflection \
+         build/demo05_shading build/demo06_hiqtc_p8
 
 .PHONY: all lib test demos run-demos clean
 
@@ -39,7 +40,7 @@ test: build/test_all
 demos: $(DEMOS)
 
 run-demos: demos
-	cd build && ./demo01_tbr_morph && ./demo02_hiqtc
+	cd build && ./demo01_tbr_morph && ./demo02_hiqtc && ./demo03_mipmap && ./demo04_reflection && ./demo05_shading && ./demo06_hiqtc_p8
 
 clean:
 	rm -rf build

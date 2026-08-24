@@ -14,11 +14,14 @@ demos que gravam PNG.
 | HDE — T&L unificado: morph targets + skinning + Gouraud | ✅ | `src/hde.c` |
 | CCB — culling por continuidade (versão simplificada: bbox/clip) | ⚠️ parcial | `hde.c` |
 | HIQTC — compressão de textura 4:1 (âncoras RGB565, PCA) | ✅ | `src/hiqtc.c` |
+| HIQTC modo paleta 8:1 (índice 8bpp + paleta 256 cores median-cut) | ✅ | `src/hiqtc.c` |
 | Mipmaps + filtragem trilinear analítica | ✅ | `src/texture.c` |
 | Depth 24 bits + stencil 8 (word por amostra `(z24<<8)|st`) | ✅ | `raster.c` |
 | Clipping homogêneo no near (Sutherland–Hodgman) | ✅ | `hde.c` |
 | API HGL (matrizes, texturas, stencil, stats, PNG out) | ✅ | `include/hotice/hgl.h` |
-| Testes automatizados | ✅ **28/28** | `tests/test_main.c` |
+| HDE: T&L — DOT3 bump (normal map, luz por pixel) | ✅ | `raster.c`, `hde.c` |
+| Env map esférico (sphere map via normal view-space) | ✅ | `raster.c`, `hde.c` |
+| Testes automatizados | ✅ **38/38** | `tests/test_main.c` |
 
 ## Build
 
@@ -32,7 +35,12 @@ make run-demos  # gera build/demo0{1..4}.png
 
 | Demo | Mostra | Verificação |
 |---|---|---|
-| `demo01_tbr_morph` | cena completa: chão HIQTC com trilinear, esfera morfando (HDE), CAA 2× | mapa visual; tris in/out no console |
+| `demo01_tbr_morph` | chão HIQTC trilinear + esfera morfando (HDE) + CAA 2× | céu/horizonte/esfera visíveis; tris in/out no console |
+| `demo02_hiqtc` | cena lado a lado RGBA8 vs HIQTC | PSNR ≈ 34.2 dB |
+| `demo03_mipmap` | campo distante sem mip vs trilinear | Laplaciano 131 → 62 (~2.1× mais suave) |
+| `demo04_reflection` | reflexão planar via stencil multipasse | centroides obj≈refl; limitado ao espelho |
+| `demo05_shading` | bump ON/OFF + esfera cromada env map | tons parede 5 → 81 (luz por pixel) |
+| `demo06_hiqtc_p8` | RGBA8 × HIQTC-4:1 × HIQTC-P8 | baseline 138 dB · HIQTC 38.4 dB · P8 33.2 dB |
 | `demo02_hiqtc` | mesma cena RGBA8 vs HIQTC lado a lado | PSNR impresso ≈ 34.2 dB |
 | `demo03_mipmap` | campo distante sem mip vs trilinear | Laplaciano médio 131 → 62 (~2.1× mais suave) |
 | `demo04_reflection` | reflexão planar via stencil multipasse intra-frame | centróides obj/refl ≈ iguais; reflexo confinado ao espelho |
@@ -51,8 +59,10 @@ make run-demos  # gera build/demo0{1..4}.png
 - **Mipmaps**: cadeia box-filter RGBA8; trilinear com derivadas analíticas
   de tela sobre varyings pré-divididos.
 - Simplificações conhecidas: normais não recebem a model matrix separada
-  (iluminação assume espaço câmera já composto); sem backface culling;
-  HIQTC sem modo paleta 8:1 ainda.
+  (iluminação assume espaço câmera já composto); sem backface culling.
+- CPU SnowFlame: ColdFire V4æ (V4e Amiga Enhanced) com unidades MontêLauro
+  MLVU (vetores · versores · ponto fixo quantizado) e MAPU (física analítica).
+  Ver `../../ColdFire-V4ae-cpu-dossie.md` (raiz do projeto SnowFlame).
 
 ## Próximos passos (roadmap)
 

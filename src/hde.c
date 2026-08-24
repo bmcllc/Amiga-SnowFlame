@@ -54,10 +54,18 @@ void hi_hde_vertex(hglCtx *ctx, const hglVertex *in, uint32_t vid,
     /* --- modelview --- */
     world = hi_mat_xform(&ctx->mv, hi_v4(p.x, p.y, p.z, 1.0f));
 
+    /* normal em espaço da câmera (envmap / DOT3) — pré-divisão adiante */
+    {
+        hiVec3 nv = hi_v3_norm(hi_mat_dir(&ctx->mv, n));
+        out->nx = nv.x; out->ny = nv.y; out->nz = nv.z;
+    }
+
     /* --- iluminação difusa por vértice (Gouraud, como o HDE faria).
        SEMÂNTICA: lightDir APONTA PARA A LUZ e é dado em ESPAÇO DA CÂMERA
-       (as demos transformam a direção do mundo pela rotação da view). --- */
-    if (ctx->capLighting) {
+       (as demos transformam a direção do mundo pela rotação da view).
+       Com BUMP ativo a luz fica por PIXEL (DOT3 no raster), então o vértice
+       sai SEM iluminar — a cor do vértice vira albedo puro. --- */
+    if (ctx->capLighting && !ctx->capBump) {
         hiVec3 nw = hi_v3_norm(hi_mat_dir(&ctx->mv, n));
         hiVec3 L = hi_v3_norm(hi_v3(ctx->lightDir[0], ctx->lightDir[1],
                                     ctx->lightDir[2]));
@@ -93,6 +101,9 @@ static void lerp_gv(hiGeomVert *o, const hiGeomVert *a, const hiGeomVert *b,
     o->g = a->g + (b->g - a->g) * t;
     o->b = a->b + (b->b - a->b) * t;
     o->a = a->a + (b->a - a->a) * t;
+    o->nx = a->nx + (b->nx - a->nx) * t;
+    o->ny = a->ny + (b->ny - a->ny) * t;
+    o->nz = a->nz + (b->nz - a->nz) * t;
 }
 
 /* Sutherland–Hodgman contra o plano w = eps (near). Retorna nova contagem */
@@ -127,6 +138,7 @@ static void project_to_screen(hglCtx *ctx, const hiGeomVert *gv,
     sv->z = gv->cz * iw * 0.5f + 0.5f; /* ndc [-1,1] -> [0,1] */
     sv->u = gv->u * iw;
     sv->v = gv->v * iw;
+    sv->nx = gv->nx * iw; sv->ny = gv->ny * iw; sv->nz = gv->nz * iw;
     sv->r = gv->r * iw; sv->g = gv->g * iw;
     sv->b = gv->b * iw; sv->a = gv->a * iw;
 }
@@ -166,6 +178,20 @@ void hi_geom_submit(hglCtx *ctx, const hglVertex vin[3], const uint32_t vid[3])
         tri.stFunc = (unsigned char)ctx->stenFunc;
         tri.stRef  = (unsigned char)ctx->stenRef;
         tri.stOp   = (unsigned char)ctx->stenOp;
+        tri.doBump = (unsigned char)(ctx->capBump && ctx->texBump != NULL);
+        tri.doEnv  = (unsigned char)(ctx->capEnv && ctx->texEnv != NULL);
+        tri.bump   = tri.doBump ? ctx->texBump : NULL;
+        tri.env    = tri.doEnv ? ctx->texEnv : NULL;
+        {
+            int qi;
+            hiVec3 L = hi_v3_norm(hi_v3(ctx->lightDir[0], ctx->lightDir[1],
+                                        ctx->lightDir[2]));
+            for (qi = 0; qi < 3; qi++) {
+                tri.amb[qi] = ctx->ambient[qi];
+                tri.lit[qi] = ctx->lightCol[qi];
+            }
+            tri.ldir[0] = L.x; tri.ldir[1] = L.y; tri.ldir[2] = L.z;
+        }
 
         /* bbox clampada ao viewport */
         {

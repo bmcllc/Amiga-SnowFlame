@@ -70,6 +70,18 @@ void hglEnable(hglCtx *ctx, hglCap cap)
     if (cap == HGL_TEXTURE_2D) ctx->capTexture = 1;
     if (cap == HGL_SKINNING)   ctx->capSkinning = 1;
     if (cap == HGL_STENCIL_TEST) ctx->stenTest = 1;
+    if (cap == HGL_BUMP_DOT3)  ctx->capBump = 1;
+    if (cap == HGL_ENVMAP)     ctx->capEnv = 1;
+}
+
+void hglBindBumpTexture(hglCtx *ctx, hglTex *tex)
+{
+    if (ctx) ctx->texBump = tex;
+}
+
+void hglBindEnvTexture(hglCtx *ctx, hglTex *tex)
+{
+    if (ctx) ctx->texEnv = tex;
 }
 void hglDisable(hglCtx *ctx, hglCap cap)
 {
@@ -78,6 +90,8 @@ void hglDisable(hglCtx *ctx, hglCap cap)
     if (cap == HGL_TEXTURE_2D) ctx->capTexture = 0;
     if (cap == HGL_SKINNING)   ctx->capSkinning = 0;
     if (cap == HGL_STENCIL_TEST) ctx->stenTest = 0;
+    if (cap == HGL_BUMP_DOT3)  ctx->capBump = 0;
+    if (cap == HGL_ENVMAP)     ctx->capEnv = 0;
 }
 
 void hglGetStats(hglCtx *ctx, int *trisIn, int *trisOut)

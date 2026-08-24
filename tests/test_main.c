@@ -556,6 +556,226 @@ static void test_stencil(void)
     hglDestroyContext(ctx);
 }
 
+
+/* =====================================================================
+ * Versores (quat) — espelho das instruções V*.Q da MLVU do V4æ
+ * ===================================================================== */
+static void test_quat(void)
+{
+    {
+        hiQuat q = hi_quat_axis(hi_v3(0, 1, 0), (float)HI_PI * 0.5f);
+        hiVec3 r = hi_quat_rotate(q, hi_v3(1, 0, 0));
+        CHECK(fabsf(r.x) < 1e-4f && fabsf(r.y) < 1e-4f && r.z < -0.999f,
+              "quat: rotação 90°Y leva +X para -Z");
+    }
+    {
+        float ang = 0.7f;
+        hiQuat q = hi_quat_axis(hi_v3(0, 1, 0), ang);
+        hiMat4 A, B;
+        int i, j, same = 1;
+        hi_quat_to_mat4(&A, q);
+        hi_mat_rotate_y(&B, ang);
+        for (i = 0; i < 3 && same; i++)
+            for (j = 0; j < 3; j++)
+                if (fabsf(A.m[i][j] - B.m[i][j]) > 1e-5f) same = 0;
+        CHECK(same, "quat: mat4 do versor = rotate_y");
+    }
+    {
+        hiQuat qa = hi_quat_axis(hi_v3(1, 0, 0), (float)HI_PI * 0.5f);
+        hiQuat qb = hi_quat_axis(hi_v3(1, 0, 0), -(float)HI_PI * 0.5f);
+        hiQuat m = hi_quat_slerp(qa, qb, 0.5f);
+        hiVec3 r = hi_quat_rotate(m, hi_v3(0, 1, 0));
+        CHECK(fabsf(r.x) < 1e-3f && fabsf(r.y - 1.0f) < 1e-3f
+              && fabsf(r.z) < 1e-3f,
+              "quat: slerp médio de ±90°X é identidade");
+    }
+}
+
+/* =====================================================================
+ * DOT3 bump — luz por pixel a partir da normal codificada no texel
+ * ===================================================================== */
+static uint32_t g_white[16], g_nm[16];
+
+/* caso 0 = sem bump · 1 = normal +Z · 2 = normal -X */
+static void dot3_scene(int caso)
+{
+    hglCtx *ctx = hglCreateContext(32, 32, 1);
+    hglTex *base, *bump;
+    hglVertex q[4];
+    uint32_t idx[6] = { 0, 1, 2, 0, 2, 3 };
+    const uint32_t *cb;
+
+    base = hglTexCreateRGBA8(4, 4, g_white);
+    bump = hglTexCreateRGBA8(4, 4, g_nm);
+
+    fill_rect_px(ctx, q, 2, 2, 30, 30, 1, 1, 1);
+
+    if (caso > 0) {
+        hglEnable(ctx, HGL_BUMP_DOT3);
+        hglBindBumpTexture(ctx, bump);
+        hglLightDirf(ctx, 0.6f, 0.0f, 0.8f);
+        hglLightColor4f(ctx, 1, 1, 1, 1);
+        hglAmbient4f(ctx, 0.2f, 0.2f, 0.2f, 1);
+    }
+    hglEnable(ctx, HGL_TEXTURE_2D);
+    hglBindTexture(ctx, 0, base);
+
+    hglFrameBegin(ctx);
+    hglDrawTrianglesIndexed(ctx, 6, idx, q);
+    hglFrameEnd(ctx);
+
+    cb = hglColorBuffer(ctx);
+    if (caso == 0) {
+        CHECK((int)(cb[16 * 32 + 16] & 255) == 255,
+              "dot3: sem bump, albedo puro passa direto");
+    } else if (caso == 1) {
+        float bx = (128.0f / 255.0f) * 2.0f - 1.0f;
+        float Lx = 0.6f, Ly = 0.0f, Lz = 0.8f, ln;
+        float ndl, k;
+        int er, expect;
+        ln = sqrtf(Lx * Lx + Ly * Ly + Lz * Lz);
+        ndl = bx * (Lx / ln) + bx * (Ly / ln) + 1.0f * (Lz / ln);
+        k = 0.2f + 1.0f * ndl;
+        er = (int)(255.0f * k);
+        expect = er > 255 ? 255 : er;
+        CHECK(abs((int)(cb[16 * 32 + 16] & 255) - expect) <= 1,
+              "dot3: normal +Z ilumina conforme fórmula");
+    } else {
+        CHECK(abs((int)(cb[16 * 32 + 16] & 255) - 51) <= 1,
+              "dot3: normal -X cai no ambiente");
+    }
+
+    hglTexDestroy(base);
+    hglTexDestroy(bump);
+    hglDisable(ctx, HGL_BUMP_DOT3);
+    hglDisable(ctx, HGL_TEXTURE_2D);
+    hglDestroyContext(ctx);
+}
+
+static void test_dot3_bump(void)
+{
+    int i;
+    for (i = 0; i < 16; i++) g_white[i] = 0xFFFFFFFFu;
+
+    dot3_scene(0);                                    /* albedo puro     */
+
+    for (i = 0; i < 16; i++)                          /* normal +Z       */
+        g_nm[i] = hi_pack_rgba8(128, 128, 255, 255);
+    dot3_scene(1);
+
+    for (i = 0; i < 16; i++)                          /* normal -X       */
+        g_nm[i] = hi_pack_rgba8(0, 128, 128, 255);
+    dot3_scene(2);
+}
+
+/* =====================================================================
+ * Env map esférico — quad de frente para a câmera → uv=(0.5,0.5)
+ * ===================================================================== */
+static void test_envmap(void)
+{
+    hglCtx *ctx = hglCreateContext(32, 32, 1);
+    hglTex *env;
+    hglVertex q[4];
+    uint32_t idx[6] = { 0, 1, 2, 0, 2, 3 };
+    uint32_t envpix[64];
+    const uint32_t *cb;
+    int i;
+
+    for (i = 0; i < 64; i++) envpix[i] = hi_pack_rgba8(0, 200, 0, 255);
+    env = hglTexCreateRGBA8(8, 8, envpix);
+
+    memset(q, 0, sizeof(q));
+    {
+        float sx[4] = { 2, 30, 30, 2 }, sy[4] = { 2, 2, 30, 30 };
+        for (i = 0; i < 4; i++) {
+            q[i].pos[0] = 2.f * sx[i] / 32.f - 1.f;
+            q[i].pos[1] = 1.f - 2.f * sy[i] / 32.f;
+            q[i].pos[2] = -0.5f;
+            q[i].nrm[2] = -1.0f;          /* normal apontando p/ câmera */
+            q[i].col[0] = 10.f / 255.f;
+            q[i].col[1] = 20.f / 255.f;
+            q[i].col[2] = 30.f / 255.f;
+            q[i].col[3] = 1.0f;
+        }
+    }
+    hglEnable(ctx, HGL_ENVMAP);
+    hglBindEnvTexture(ctx, env);
+
+    hglFrameBegin(ctx);
+    hglDrawTrianglesIndexed(ctx, 6, idx, q);
+    hglFrameEnd(ctx);
+
+    cb = hglColorBuffer(ctx);
+    {
+        int r = (int)(cb[16 * 32 + 16] & 255);
+        int g = (int)((cb[16 * 32 + 16] >> 8) & 255);
+        int b = (int)((cb[16 * 32 + 16] >> 16) & 255);
+        CHECK(r == 10 && abs(g - 220) <= 2 && b == 30,
+              "envmap: normal frontal amostra o centro (aditivo)");
+    }
+    hglDestroyContext(ctx);
+}
+
+/* =====================================================================
+ * HIQTC modo PALETA (8bpp)
+ * ===================================================================== */
+static void test_hiqtc_p8(void)
+{
+    /* sólido decodifica exato (pós-roundtrip 565) */
+    {
+        uint32_t px[256], ref;
+        hglTex *t;
+        uint32_t *dec;
+        int i, ok = 1;
+        for (i = 0; i < 256; i++) px[i] = hi_pack_rgba8(200, 120, 40, 255);
+        t = hglTexCreateHIQTCP8FromRGBA8(16, 16, px);
+        CHECK(t != NULL && t->fmt == HI_FMT_HIQTC_P8,
+              "hiqtc-p8: criação em modo paleta");
+        dec = hi_hiqtc_p8_decode_all(t);
+        {
+            int r, g, b;
+            hi_unpack_rgba8(px[0], &r, &g, &b, NULL);
+            ref = hi_pack_rgba8((r >> 3) << 3, (g >> 2) << 2, (b >> 3) << 3,
+                                255);
+        }
+        for (i = 0; i < 256; i++)
+            if (dec[i] != ref) ok = 0;
+        CHECK(ok, "hiqtc-p8: bloco sólido é exato pós-quantização");
+        free(dec);
+        hglTexDestroy(t);
+    }
+    /* gradiente suave: PSNR >= 28 dB */
+    {
+        static uint32_t px[64 * 64];
+        hglTex *t;
+        uint32_t *dec;
+        double mse = 0.0;
+        int i, x, y;
+        for (y = 0; y < 64; y++)
+            for (x = 0; x < 64; x++)
+                px[y * 64 + x] = hi_pack_rgba8(x * 4, y * 4,
+                                               (x + y) * 2, 255);
+        t = hglTexCreateHIQTCP8FromRGBA8(64, 64, px);
+        dec = hi_hiqtc_p8_decode_all(t);
+        for (i = 0; i < 64 * 64; i++) {
+            int ch;
+            for (ch = 0; ch < 3; ch++) {
+                float a = (float)((px[i] >> (ch * 8)) & 255);
+                float b = (float)((dec[i] >> (ch * 8)) & 255);
+                mse += (a - b) * (a - b);
+            }
+        }
+        mse /= (double)(64 * 64 * 3);
+        if (mse <= 0.0) mse = 1e-9;
+        printf("     PSNR gradiente HIQTC-P8 = %.2f dB\n",
+               10.0 * log10(255.0 * 255.0 / mse));
+        CHECK(10.0 * log10(255.0 * 255.0 / mse) >= 28.0,
+              "hiqtc-p8: PSNR gradiente >= 28 dB");
+        free(dec);
+        hglTexDestroy(t);
+    }
+}
+
 int main(void)
 {
     printf("== Hot-ice: suíte de testes ==\n");
@@ -571,6 +791,10 @@ int main(void)
     test_mipmap_chain();
     test_trilinear_levels();
     test_stencil();
+    test_quat();
+    test_dot3_bump();
+    test_envmap();
+    test_hiqtc_p8();
 
     printf("\n%d verificações, %d falhas\n", g_run, g_fail);
     return g_fail ? 1 : 0;

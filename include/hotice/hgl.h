@@ -24,7 +24,9 @@ typedef enum {
     HGL_LIGHTING   = 1,   /* iluminação difusa por vértice (HDE)      */
     HGL_TEXTURE_2D = 2,   /* mapeamento de textura                    */
     HGL_SKINNING      = 4,   /* palette esquelética (HDE, até 8 ossos/vtx)*/
-    HGL_STENCIL_TEST  = 8    /* teste de stencil por amostra              */
+    HGL_STENCIL_TEST  = 8,   /* teste de stencil por amostra              */
+    HGL_BUMP_DOT3     = 16,  /* bump mapping via DOT3 (normal map RGB)    */
+    HGL_ENVMAP        = 32   /* mapeamento de ambiente (sphere map)       */
 } hglCap;
 
 typedef enum {
@@ -96,11 +98,20 @@ void     hglAmbient4f(hglCtx *ctx, float r, float g, float b, float a_);
 /* ----------------------------------------------------------- texturas */
 hglTex  *hglTexCreateRGBA8(int w, int h, const uint32_t *pixels_packed);
 hglTex  *hglTexCreateHIQTCFromRGBA8(int w, int h, const uint32_t *pixels_packed);
+/* Modo PALETA 8:1: índice de 8 bits por texel + paleta global de 256 cores
+   (median-cut PCA). Exatamente 8x menor que RGBA8. Sem blocos/âncoras. */
+hglTex  *hglTexCreateHIQTCP8FromRGBA8(int w, int h, const uint32_t *pixels_packed);
 int      hglTexGenerateMipmaps(hglTex *tex);   /* cadeia box-filter p/ trilinear */
 void     hglTexDestroy(hglTex *tex);
 void     hglTexFilter(hglTex *tex, hglFilter f);
 void     hglTexWrap(hglTex *tex, hglWrap w);
 void     hglBindTexture(hglCtx *ctx, int unit, hglTex *tex);
+/* DOT3 bump: textura cujo RGB codifica a normal do texel (r=x,g=y,b=z,
+   codificados como (n*0.5+0.5)*255). Usa o MESMO uv da textura base.     */
+void     hglBindBumpTexture(hglCtx *ctx, hglTex *tex);
+/* Env map esférico (sphere map): coordenadas geradas pela normal em
+   espaço da câmera; resultado é SOMADO à cor iluminada.                  */
+void     hglBindEnvTexture(hglCtx *ctx, hglTex *tex);
 
 /* --------------------------------------- HDE: morphing, skinning, T&L */
 void     hglBindMorphTarget(hglCtx *ctx, int channel,

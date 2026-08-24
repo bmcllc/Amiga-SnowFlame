@@ -201,3 +201,230 @@ uint32_t hi_hiqtc_decode_texel(const hglTex *t, int x, int y)
     }
     return hi_pack_rgba8(r, g, b, 255);
 }
+
+
+/* =====================================================================
+ * HIQTC modo PALETA — 8 bits por texel (8:1 vs RGBA8).
+ * Median-cut exato sobre buckets RGB555; mapeamento por vizinho mais
+ * próximo com cache por bucket.
+ * ===================================================================== */
+typedef struct {
+    int    count;               /* pixels na caixa                    */
+    long   rs, gs, bs;          /* somas p/ centróide                 */
+    int    rmin, rmax, gmin, gmax, bmin, bmax;
+    int   *buckets;             /* ids RGB555 pertencentes            */
+    int    nb, cap;
+} HiP8Box;
+
+static void p8_box_push(HiP8Box *b, int id)
+{
+    if (b->nb == b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 16;
+        b->buckets = (int *)realloc(b->buckets,
+                                    sizeof(int) * (size_t)b->cap);
+    }
+    b->buckets[b->nb++] = id;
+}
+
+static void p8_box_addpx(HiP8Box *b, int r, int g, int bl, long cnt)
+{
+    if (b->count == 0) {
+        b->rmin = b->rmax = r;
+        b->gmin = b->gmax = g;
+        b->bmin = b->bmax = bl;
+    } else {
+        if (r < b->rmin) b->rmin = r;
+        if (r > b->rmax) b->rmax = r;
+        if (g < b->gmin) b->gmin = g;
+        if (g > b->gmax) b->gmax = g;
+        if (bl < b->bmin) b->bmin = bl;
+        if (bl > b->bmax) b->bmax = bl;
+    }
+    b->count += (int)cnt;
+    b->rs += (long)r * cnt; b->gs += (long)g * cnt; b->bs += (long)bl * cnt;
+}
+
+static void p8_box_free(HiP8Box *b)
+{
+    free(b->buckets);
+    b->buckets = NULL;
+    b->nb = b->cap = 0;
+}
+
+int hi_hiqtc_p8_encode(int w, int h, const uint32_t *pix,
+                       uint8_t **out_idx, uint16_t *pal)
+{
+    enum { NB = 32768 };            /* buckets RGB555 */
+    unsigned short *hist = calloc(NB, sizeof(unsigned short));
+    long *sr = calloc(NB, sizeof(long));
+    long *sg = calloc(NB, sizeof(long));
+    long *sb = calloc(NB, sizeof(long));
+    uint16_t *map = malloc(sizeof(uint16_t) * NB);
+    HiP8Box boxes[256];
+    int nboxes = 0, x, y, bi, k;
+    size_t npix = (size_t)w * h, i;
+    uint8_t *idx;
+
+    if (!hist || !sr || !sg || !sb || !map) goto fail;
+    memset(boxes, 0, sizeof(boxes));
+
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            int r, g, b, c5;
+            hi_unpack_rgba8(pix[y * w + x], &r, &g, &b, NULL);
+            c5 = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+            if (!hist[c5]) { sr[c5] = sg[c5] = sb[c5] = 0; }
+            hist[c5]++;
+            sr[c5] += r; sg[c5] += g; sb[c5] += b;
+        }
+
+    /* raiz */
+    for (i = 0; i < NB; i++)
+        if (hist[i]) {
+            int r = (int)(sr[i] / hist[i]), g = (int)(sg[i] / hist[i]),
+                b = (int)(sb[i] / hist[i]);
+            p8_box_push(&boxes[0], (int)i);
+            p8_box_addpx(&boxes[0], r, g, b, hist[i]);
+        }
+    nboxes = 1;
+
+    /* median-cut: corta sempre a caixa de maior score até 256 */
+    while (nboxes < 256) {
+        int best = -1, chan, med, acc;
+        long bestscore = -1, half;
+        HiP8Box *B, *N;
+        for (bi = 0; bi < nboxes; bi++) {
+            HiP8Box *C = &boxes[bi];
+            long rr = C->rmax - C->rmin, gg = C->gmax - C->gmin,
+                 bb2 = C->bmax - C->bmin;
+            long mx = rr > gg ? (rr > bb2 ? rr : bb2) : (gg > bb2 ? gg : bb2);
+            long score = (long)C->count * (mx + 1);
+            if (C->count < 2 || mx == 0 || C->nb < 2) continue;
+            if (score > bestscore) { bestscore = score; best = bi; }
+        }
+        if (best < 0) break;
+        B = &boxes[best];
+        {
+            long rr = B->rmax - B->rmin, gg = B->gmax - B->gmin,
+                 bb2 = B->bmax - B->bmin;
+            chan = (rr >= gg && rr >= bb2) ? 0 : (gg >= bb2 ? 1 : 2);
+        }
+        /* ordena buckets da caixa pelo canal escolhido (insertion ok:
+           caixas pequenas em imagens típicas; piores casos raros) */
+        {
+            int a, b2;
+            for (a = 1; a < B->nb; a++) {
+                int keyv = B->buckets[a], tmp;
+                int kv = chan == 0 ? ((keyv >> 10) & 31)
+                       : chan == 1 ? ((keyv >> 5) & 31)
+                                   : (keyv & 31);
+                for (b2 = a - 1; b2 >= 0; b2--) {
+                    int o = B->buckets[b2];
+                    int ov = chan == 0 ? ((o >> 10) & 31)
+                           : chan == 1 ? ((o >> 5) & 31)
+                                       : (o & 31);
+                    if (ov <= kv) break;
+                    B->buckets[b2 + 1] = o;
+                }
+                B->buckets[b2 + 1] = keyv;
+                tmp = 0; (void)tmp;
+            }
+        }
+        half = B->count / 2;
+        acc = 0; med = B->nb / 2;
+        for (k = 0; k < B->nb; k++) {
+            acc += hist[B->buckets[k]];
+            if (acc >= half) { med = k + 1; break; }
+        }
+        if (med <= 0 || med >= B->nb) med = B->nb / 2;
+
+        N = &boxes[nboxes++];
+        memset(N, 0, sizeof(*N));
+        /* move metade superior p/ N e recompõe estatísticas das duas */
+        {
+            int j2;
+            HiP8Box T = *B;
+            memset(B, 0, sizeof(*B));
+            memset(N, 0, sizeof(*N));
+            for (j2 = 0; j2 < T.nb; j2++) {
+                int id = T.buckets[j2];
+                long cnt = hist[id];
+                int r = (int)(sr[id] / cnt), g = (int)(sg[id] / cnt),
+                    b2 = (int)(sb[id] / cnt);
+                HiP8Box *dst = (j2 < med) ? B : N;
+                p8_box_push(dst, id);
+                p8_box_addpx(dst, r, g, b2, cnt);
+            }
+            free(T.buckets);
+        }
+    }
+
+    /* paleta = centróides */
+    for (bi = 0; bi < nboxes; bi++) {
+        HiP8Box *B = &boxes[bi];
+        int r = B->count ? (int)(B->rs / B->count) : 0;
+        int g = B->count ? (int)(B->gs / B->count) : 0;
+        int b2 = B->count ? (int)(B->bs / B->count) : 0;
+        pal[bi] = hi_pack_rgb565(r, g, b2);
+    }
+
+    /* mapeamento nearest com cache por bucket */
+    for (k = 0; k < NB; k++) map[k] = 0xFFFF;
+    idx = (uint8_t *)malloc(npix);
+    if (!idx) goto fail;
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            int r, g, b, c5, bestr = 0;
+            long bd = 1L << 30;
+            hi_unpack_rgba8(pix[y * w + x], &r, &g, &b, NULL);
+            c5 = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+            if (map[c5] == 0xFFFF) {
+                for (bi = 0; bi < nboxes; bi++) {
+                    /* tudo no domínio comum 5/6/5 */
+                    long dr = (r >> 3) - ((pal[bi] >> 11) & 31);
+                    long dg = (g >> 2) - ((pal[bi] >> 5) & 63);
+                    long db2 = (b >> 3) - (pal[bi] & 31);
+                    long d = dr * dr * 4 + dg * dg * 2 + db2 * db2;
+                    if (d < bd) { bd = d; bestr = bi; }
+                }
+                map[c5] = (uint16_t)bestr;
+            }
+            idx[y * w + x] = (uint8_t)map[c5];
+        }
+
+    for (bi = 0; bi < nboxes; bi++) p8_box_free(&boxes[bi]);
+    free(hist); free(sr); free(sg); free(sb); free(map);
+    *out_idx = idx;
+    return nboxes;
+
+fail:
+    for (bi = 0; bi < 256; bi++) p8_box_free(&boxes[bi]);
+    free(hist); free(sr); free(sg); free(sb); free(map);
+    return -1;
+}
+
+uint32_t hi_hiqtc_p8_decode_texel(const hglTex *t, int x, int y)
+{
+    int r, g, b;
+    if (!t || t->fmt != HI_FMT_HIQTC_P8 || !t->p8) return 0xFF000000u;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x >= t->w) x = t->w - 1;
+    if (y >= t->h) y = t->h - 1;
+    hi_unpack_rgb565(t->pal[t->p8[(size_t)y * t->w + x]], &r, &g, &b);
+    return hi_pack_rgba8(r, g, b, 255);
+}
+
+uint32_t *hi_hiqtc_p8_decode_all(const hglTex *t)
+{
+    uint32_t *out;
+    size_t i, npix;
+    if (!t || t->fmt != HI_FMT_HIQTC_P8 || !t->p8) return NULL;
+    npix = (size_t)t->w * t->h;
+    out = malloc(sizeof(uint32_t) * npix);
+    if (!out) return NULL;
+    for (i = 0; i < npix; i++) out[i] = hi_hiqtc_p8_decode_texel(t,
+                                     (int)(i % (size_t)t->w),
+                                     (int)(i / (size_t)t->w));
+    return out;
+}

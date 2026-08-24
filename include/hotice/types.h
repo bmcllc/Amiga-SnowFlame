@@ -169,4 +169,96 @@ static inline void hi_unpack_rgb565(uint16_t c, int *r, int *g, int *b)
     if (b) *b = (int)((c & 31) << 3);
 }
 
+/* =====================================================================
+ * Versores (quaternions unitários) — espelho em software da MLVU do V4æ.
+ * Convenção: mão direita, rotação de +90° em Y leva +X → -Z (igual a
+ * hi_mat_rotate_y). Em silício, cada função abaixo é 1 instrução V*.Q.
+ * ===================================================================== */
+typedef struct { float w, x, y, z; } hiQuat;
+
+static inline hiQuat hi_quat(float w, float x, float y, float z)
+{
+    hiQuat q = { w, x, y, z };
+    return q;
+}
+static inline hiQuat hi_quat_id(void) { return hi_quat(1.0f, 0, 0, 0); }
+/* versor = rotação de `rad` radianos em torno de `axis` (normalizado) */
+static inline hiQuat hi_quat_axis(hiVec3 axis, float rad)
+{
+    float h = rad * 0.5f, s = sinf(h);
+    return hi_quat(cosf(h), axis.x * s, axis.y * s, axis.z * s);
+}
+static inline hiQuat hi_quat_mul(hiQuat a, hiQuat b)
+{
+    return hi_quat(a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+                   a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+                   a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                   a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w);
+}
+static inline hiQuat hi_quat_conj(hiQuat q)
+{
+    return hi_quat(q.w, -q.x, -q.y, -q.z);
+}
+static inline float hi_quat_len2(hiQuat q)
+{
+    return q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+}
+static inline hiQuat hi_quat_norm(hiQuat q)
+{
+    float l = sqrtf(hi_quat_len2(q));
+    if (l < 1e-12f) return hi_quat_id();
+    l = 1.0f / l;
+    return hi_quat(q.w * l, q.x * l, q.y * l, q.z * l);
+}
+/* nlerp: barato e suficiente para poses adjacentes (caminho curto) */
+static inline hiQuat hi_quat_nlerp(hiQuat a, hiQuat b, float t)
+{
+    if (a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z < 0.0f)
+        b = hi_quat(-b.w, -b.x, -b.y, -b.z);
+    return hi_quat_norm(hi_quat(a.w + (b.w - a.w) * t,
+                                a.x + (b.x - a.x) * t,
+                                a.y + (b.y - a.y) * t,
+                                a.z + (b.z - a.z) * t));
+}
+/* slerp completo (mesmo caminho do VSlerp.Q da MLVU) */
+static inline hiQuat hi_quat_slerp(hiQuat a, hiQuat b, float t)
+{
+    float d = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z, th, s, wa, wb;
+    if (d < 0.0f) { d = -d; b = hi_quat(-b.w, -b.x, -b.y, -b.z); }
+    if (d > 0.9995f) return hi_quat_nlerp(a, b, t);
+    th = acosf(d < -1.0f ? -1.0f : d);
+    s = sinf(th);
+    wa = sinf((1.0f - t) * th) / s;
+    wb = sinf(t * th) / s;
+    return hi_quat(a.w * wa + b.w * wb, a.x * wa + b.x * wb,
+                   a.y * wa + b.y * wb, a.z * wa + b.z * wb);
+}
+/* rotaciona vetor v por versor q: v' = q·v·q* */
+static inline hiVec3 hi_quat_rotate(hiQuat q, hiVec3 v)
+{
+    /* forma otimizada sem montar quat temporário */
+    hiVec3 u = hi_v3(q.x, q.y, q.z), c = hi_v3_cross(u, v);
+    hiVec3 cc = hi_v3_cross(u, c);
+    return hi_v3_add(hi_v3_add(v, hi_v3_scale(c, 2.0f * q.w)),
+                     hi_v3_scale(cc, 2.0f));
+}
+/* conversão para mat4 (coluna-vetor, row-major — convenção do projeto,
+   alinhada a hi_mat_rotate_y: +90°Y leva +X -> -Z) */
+static inline void hi_quat_to_mat4(hiMat4 *o, hiQuat q)
+{
+    float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+    float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+    float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    hi_mat_identity(o);
+    o->m[0][0] = 1.0f - 2.0f * (yy + zz);
+    o->m[0][1] = 2.0f * (xy - wz);
+    o->m[0][2] = 2.0f * (xz + wy);
+    o->m[1][0] = 2.0f * (xy + wz);
+    o->m[1][1] = 1.0f - 2.0f * (xx + zz);
+    o->m[1][2] = 2.0f * (yz - wx);
+    o->m[2][0] = 2.0f * (xz - wy);
+    o->m[2][1] = 2.0f * (yz + wx);
+    o->m[2][2] = 1.0f - 2.0f * (xx + yy);
+}
+
 #endif /* HOTICE_TYPES_H */

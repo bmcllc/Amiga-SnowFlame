@@ -10,15 +10,17 @@
 
 #define HI_TILE 32 /* tile 32x32, como no dossiê */
 
-enum { HI_FMT_RGBA8 = 0, HI_FMT_HIQTC = 1 };
+enum { HI_FMT_RGBA8 = 0, HI_FMT_HIQTC = 1, HI_FMT_HIQTC_P8 = 2 };
 
 struct hglTex {
     int w, h;
     int fmt;
     int filter;
     int wrap;
-    uint32_t *pix;   /* HI_FMT_RGBA8 */
-    uint8_t  *hiq;   /* HI_FMT_HIQTC: 8 bytes por bloco 4x4 */
+    uint32_t *pix;      /* HI_FMT_RGBA8                              */
+    uint8_t  *hiq;      /* HI_FMT_HIQTC: 8 bytes por bloco 4x4       */
+    uint8_t  *p8;       /* HI_FMT_HIQTC_P8: índice 8bpp              */
+    uint16_t  pal[256]; /* paleta global do modo P8 (RGB565)         */
 
     /* cadeia de mipmaps (RGBA8), gerada por hglTexGenerateMipmaps.
        lv[0] é cópia da base decodificada; sampler trilinear usa só lv[]. */
@@ -35,12 +37,14 @@ typedef struct {
     float z;               /* profundidade ndc mapeada [0,1] */
     float u, v;            /* uv * iw (perspectiva correta)  */
     float r, g, b, a;      /* cor lit * iw                   */
+    float nx, ny, nz;      /* normal view space * iw (envmap)*/
 } hiVertScreen;
 
 /* vértice em clip space + varyings planos (pré-divisão) */
 typedef struct {
     float cx, cy, cz, cw;
     float u, v, r, g, b, a;
+    float nx, ny, nz;      /* normal view space (pré-divisão) */
 } hiGeomVert;
 
 typedef struct {
@@ -48,6 +52,9 @@ typedef struct {
     const hglTex *tex;          /* textura capturada na submissão        */
     unsigned char stTest, stFunc, stRef, stOp; /* stencil idem — o estado
                                   é congelado por draw, não global no flush */
+    const hglTex *bump, *env;   /* DOT3/sphere map idem (por draw)       */
+    unsigned char doBump, doEnv;
+    float amb[3], lit[3], ldir[3]; /* iluminação congelada p/ DOT3       */
     int minx, miny, maxx, maxy; /* bbox em pixels (max exclusivo)        */
 } hiTriScreen;
 
@@ -92,9 +99,10 @@ struct hglCtx {
     /* estado HDE */
     hiMat4 mv, proj;
     int matrixMode;
-    int capLighting, capTexture, capSkinning;
+    int capLighting, capTexture, capSkinning, capBump, capEnv;
     float lightDir[3], lightCol[3], ambient[4];
     hglTex *texBound;
+    hglTex *texBump, *texEnv;
     const float *morphTarget[4];
     int morphCount[4];
     float morphWeight[4];
@@ -109,6 +117,12 @@ struct hglCtx {
 uint8_t *hi_hiqtc_encode_rgba8(int w, int h, const uint32_t *pix);
 uint32_t hi_hiqtc_decode_texel(const hglTex *t, int x, int y);
 uint32_t *hi_hiqtc_decode_all(const hglTex *t); /* base decodificada */
+
+/* modo paleta 8bpp --- */
+int      hi_hiqtc_p8_encode(int w, int h, const uint32_t *pix,
+                            uint8_t **out_idx, uint16_t *pal);
+uint32_t hi_hiqtc_p8_decode_texel(const hglTex *t, int x, int y);
+uint32_t *hi_hiqtc_p8_decode_all(const hglTex *t);
 
 /* --- texture.c --- */
 uint32_t hi_sample_tex(const hglTex *t, float u, float v);

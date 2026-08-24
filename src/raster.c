@@ -182,6 +182,78 @@ static void hi_raster_tri(hglCtx *ctx, HiTileRect rect, const hiTriScreen *tri)
                             rho = (pr > qr) ? pr : qr;
                         }
                         col = hi_shade(tri, u, v, rr, gg, bb_, rho);
+
+                        /* ---- DOT3 bump: reluz por pixel com a normal do
+                           texel. O vértice chegou sem luz (albedo). ---- */
+                        if (tri->doBump && tri->bump) {
+                            uint32_t bt = hi_sample_tex_mip(tri->bump,
+                                                            u, v, rho);
+                            float bx = ((float)((bt >> 0) & 255)
+                                        / 255.0f) * 2.0f - 1.0f;
+                            float by_ = ((float)((bt >> 8) & 255)
+                                         / 255.0f) * 2.0f - 1.0f;
+                            float bz = ((float)((bt >> 16) & 255)
+                                        / 255.0f) * 2.0f - 1.0f;
+                            float ndl = bx * tri->ldir[0]
+                                      + by_ * tri->ldir[1]
+                                      + bz * tri->ldir[2];
+                            int br2, bg2, bb22;
+                            float k0, k1, k2;
+                            if (ndl < 0.0f) ndl = 0.0f;
+                            br2 = (int)(col & 255);
+                            bg2 = (int)((col >> 8) & 255);
+                            bb22 = (int)((col >> 16) & 255);
+                            k0 = tri->amb[0] + tri->lit[0] * ndl;
+                            k1 = tri->amb[1] + tri->lit[1] * ndl;
+                            k2 = tri->amb[2] + tri->lit[2] * ndl;
+                            br2 = (int)(br2 * k0);
+                            bg2 = (int)(bg2 * k1);
+                            bb22 = (int)(bb22 * k2);
+                            if (br2 > 255) br2 = 255;
+                            if (bg2 > 255) bg2 = 255;
+                            if (bb22 > 255) bb22 = 255;
+                            col = hi_pack_rgba8(br2, bg2, bb22, 255);
+                        }
+
+                        /* ---- env map esférico: normal da câmera → uv ---- */
+                        if (tri->doEnv && tri->env) {
+                            float ex = w0 * a.nx + w1 * b.nx + w2 * c.nx;
+                            float ey = w0 * a.ny + w1 * b.ny + w2 * c.ny;
+                            float ez = w0 * a.nz + w1 * b.nz + w2 * c.nz;
+                            float inv = 1.0f / diw;
+                            float nxx = ex * inv, nyy = ey * inv,
+                                  nzz = ez * inv;
+                            float ln = sqrtf(nxx * nxx + nyy * nyy
+                                             + nzz * nzz);
+                            float rx, ry, rz, m2, euv_u, euv_v;
+                            uint32_t ec;
+                            if (ln > 1e-9f) {
+                                nxx /= ln; nyy /= ln; nzz /= ln;
+                            }
+                            /* esfera clássica com olho em (0,0,1):
+                               r = 2(n·E)n − E */
+                            rx = 2.0f * nzz * nxx;
+                            ry = 2.0f * nzz * nyy;
+                            rz = 2.0f * nzz * nzz - 1.0f;
+                            m2 = 2.0f * sqrtf(rx * rx + ry * ry
+                                              + (rz + 1.0f) * (rz + 1.0f))
+                                 + 1e-6f;
+                            euv_u = rx / m2 + 0.5f;
+                            euv_v = ry / m2 + 0.5f;
+                            ec = hi_sample_tex_mip(tri->env, euv_u, euv_v, rho);
+                            {
+                                int cr2 = (int)(col & 255)
+                                        + (int)(ec & 255);
+                                int cg2 = (int)((col >> 8) & 255)
+                                        + (int)((ec >> 8) & 255);
+                                int cb2 = (int)((col >> 16) & 255)
+                                        + (int)((ec >> 16) & 255);
+                                if (cr2 > 255) cr2 = 255;
+                                if (cg2 > 255) cg2 = 255;
+                                if (cb2 > 255) cb2 = 255;
+                                col = hi_pack_rgba8(cr2, cg2, cb2, 255);
+                            }
+                        }
                     }
 
                     /* ---- operação de stencil no sucesso ---- */
