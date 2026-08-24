@@ -14,7 +14,7 @@ TEST_SRCS := tests/test_main.c tests/test_mapu.c tests/test_sys_funcs.c
 DEMOS := build/demo01_tbr_morph build/demo02_hiqtc \
          build/demo03_mipmap build/demo04_reflection \
          build/demo05_shading build/demo06_hiqtc_p8 \
-              build/demo07_mapu
+         build/demo07_mapu build/demo08_skinning_physics
 
 .PHONY: all lib test demos run-demos clean
 
@@ -43,7 +43,7 @@ test: build/test_all
 demos: $(DEMOS)
 
 run-demos: demos
-	cd build && ./demo01_tbr_morph && ./demo02_hiqtc && ./demo03_mipmap && ./demo04_reflection && ./demo05_shading && ./demo06_hiqtc_p8
+	cd build && ./demo01_tbr_morph && ./demo02_hiqtc && ./demo03_mipmap && ./demo04_reflection && ./demo05_shading && ./demo06_hiqtc_p8 && ./demo07_mapu && ./demo08_skinning_physics
 
 clean:
 	rm -rf build
