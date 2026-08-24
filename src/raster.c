@@ -15,6 +15,8 @@
  * para geometria opaca com depth test sempre ativo.
  * ===================================================================== */
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "internal.h"
 
 static inline float hi_edge(float ax, float ay, float bx, float by,
@@ -24,13 +26,14 @@ static inline float hi_edge(float ax, float ay, float bx, float by,
 }
 
 static uint32_t hi_shade(const hiTriScreen *tri,
-                         float u, float v, float r, float g, float b)
+                         float u, float v, float r, float g, float b,
+                         float rho)
 {
     uint32_t base;
     int br, bg, bb, ba;
 
     if (tri->tex)
-        base = hi_sample_tex(tri->tex, u, v);
+        base = hi_sample_tex_mip(tri->tex, u, v, rho);
     else {
         int ir = (int)(r * 255.0f + 0.5f);
         int ig = (int)(g * 255.0f + 0.5f);
@@ -64,18 +67,56 @@ static void hi_raster_tri(hglCtx *ctx, HiTileRect rect, const hiTriScreen *tri)
     hiVertScreen a = tri->v[0], b = tri->v[1], c = tri->v[2];
     float area = hi_edge(a.sx, a.sy, b.sx, b.sy, c.sx, c.sy);
     int x, y, s, ns = ctx->samples;
+    /* derivadas de tela dos varyings pré-divididos (para o LOD trilinear) */
+    int use_mip;
+    float dUdx=0, dUdy=0, dVdx=0, dVdy=0, dWdx=0, dWdy=0;
+    float tw = 1.0f, thh = 1.0f;
 
     if (fabsf(area) < 1e-9f) return;
     if (area < 0.0f) {
         hiVertScreen t = b; b = c; c = t;
         area = -area;
     }
+
+    use_mip = tri->tex && tri->tex->nlevels > 1 &&
+              tri->tex->filter == HGL_FILTER_LINEAR;
+    if (use_mip) {
+        const hiVertScreen *p[3] = { &a, &b, &c };
+        float D = 1.0f / ((b.sx - a.sx) * (c.sy - a.sy) -
+                          (b.sy - a.sy) * (c.sx - a.sx));
+        tw = (float)tri->tex->w; thh = (float)tri->tex->h;
+        #define GRAD(outx, outy, sel)                                     \
+            {                                                             \
+                float f0 = p[0]->sel, f1 = p[1]->sel, f2 = p[2]->sel;     \
+                outx = ((f1 - f0) * (p[2]->sy - p[0]->sy)                 \
+                      - (f2 - f0) * (p[1]->sy - p[0]->sy)) * D;           \
+                outy = ((f2 - f0) * (p[1]->sx - p[0]->sx)                 \
+                      - (f1 - f0) * (p[2]->sx - p[0]->sx)) * D;           \
+            }
+        GRAD(dUdx, dUdy, u)
+        GRAD(dVdx, dVdy, v)
+        GRAD(dWdx, dWdy, iw)
+        #undef GRAD
+    }
+
     {
         float inv_area = 1.0f / area;
         int x0 = tri->minx > rect.x0 ? tri->minx : rect.x0;
         int y0 = tri->miny > rect.y0 ? tri->miny : rect.y0;
         int x1 = tri->maxx < rect.x0 + HI_TILE ? tri->maxx : rect.x0 + HI_TILE;
         int y1 = tri->maxy < rect.y0 + HI_TILE ? tri->maxy : rect.y0 + HI_TILE;
+
+        /* direções das arestas (pós-flip) para a regra top-left:
+           ponto na aresta só é aceito se a aresta for "top" (horizontal,
+           indo p/ a direita) ou "left" (subindo). Elimina rachaduras E
+           repintadas em arestas compartilhadas — sem depender do depth. */
+        float e0dx = c.sx - b.sx, e0dy = c.sy - b.sy; /* b->c */
+        float e1dx = a.sx - c.sx, e1dy = a.sy - c.sy; /* c->a */
+        float e2dx = b.sx - a.sx, e2dy = b.sy - a.sy; /* a->b */
+
+        #define HI_EDGE_OK(W, DX, DY)                                      \
+            ((W) > 0.0f || ((W) == 0.0f &&                                 \
+               (((DY) == 0.0f && (DX) > 0.0f) || (DY) < 0.0f)))
 
         for (y = y0; y < y1; y++) {
             float cy = (float)y + 0.5f;
@@ -93,7 +134,9 @@ static void hi_raster_tri(hglCtx *ctx, HiTileRect rect, const hiTriScreen *tri)
                     uint32_t z24, col;
                     size_t si;
 
-                    if (w0 <= 0.0f || w1 <= 0.0f || w2 <= 0.0f) continue;
+                    if (!HI_EDGE_OK(w0, e0dx, e0dy)) continue;
+                    if (!HI_EDGE_OK(w1, e1dx, e1dy)) continue;
+                    if (!HI_EDGE_OK(w2, e2dx, e2dy)) continue;
 
                     w0 *= inv_area; w1 *= inv_area; w2 *= inv_area;
                     diw   = w0 * a.iw + w1 * b.iw + w2 * c.iw;
@@ -110,14 +153,53 @@ static void hi_raster_tri(hglCtx *ctx, HiTileRect rect, const hiTriScreen *tri)
                     z24 = (uint32_t)(z * 16777215.0f);
 
                     si = ((size_t)pix * (size_t)ns) + (size_t)s;
-                    if (z24 >= ctx->sdepth[si]) continue; /* depth LESS */
 
-                    col = hi_shade(tri, u, v, rr, gg, bb_);
-                    ctx->sdepth[si] = z24;
+                    /* ---- teste de stencil (byte baixo do word),
+                            com o estado congelado no draw ---- */
+                    if (tri->stTest) {
+                        uint32_t sten = ctx->sdepth[si] & 255u;
+                        int pass = 1;
+                        if (tri->stFunc == HGL_ST_EQUAL)
+                            pass = ((int)sten == (int)tri->stRef);
+                        else if (tri->stFunc == HGL_ST_NEQUAL)
+                            pass = ((int)sten != (int)tri->stRef);
+                        if (!pass) continue; /* falha de stencil: KEEP */
+                    }
+
+                    /* ---- depth LESS no byte alto ---- */
+                    if (z24 >= ((ctx->sdepth[si] >> 8) & 0xFFFFFFu)) continue;
+
+                    /* ---- LOD trilinear: rho pelas derivadas de tela ---- */
+                    {
+                        float rho = 1.0f;
+                        if (use_mip) {
+                            float dudx = (dUdx - u * dWdx) / diw;
+                            float dudy = (dUdy - u * dWdy) / diw;
+                            float dvdx = (dVdx - v * dWdx) / diw;
+                            float dvdy = (dVdy - v * dWdy) / diw;
+                            float pr = tw * sqrtf(dudx * dudx + dudy * dudy);
+                            float qr = thh * sqrtf(dvdx * dvdx + dvdy * dvdy);
+                            rho = (pr > qr) ? pr : qr;
+                        }
+                        col = hi_shade(tri, u, v, rr, gg, bb_, rho);
+                    }
+
+                    /* ---- operação de stencil no sucesso ---- */
+                    {
+                        uint32_t newst = ctx->sdepth[si] & 255u;
+                        switch ((hglStencilAct)tri->stOp) {
+                        case HGL_SO_REPLACE: newst = (uint32_t)tri->stRef & 255u; break;
+                        case HGL_SO_INCR:    newst = (newst < 255u) ? newst + 1u : 255u; break;
+                        case HGL_SO_ZERO:    newst = 0u; break;
+                        default: break; /* KEEP */
+                        }
+                        ctx->sdepth[si] = (z24 << 8) | newst;
+                    }
                     ctx->scolor[si] = col;
                 }
             }
         }
+        #undef HI_EDGE_OK
     }
 }
 
@@ -133,10 +215,16 @@ void hi_raster_flush(hglCtx *ctx)
             rect.x0 = tx * HI_TILE;
             rect.y0 = ty * HI_TILE;
 
-            /* início de tile: SRAM interna parte do estado de clear */
-            for (i = 0; i < (int)npix; i++) {
-                ctx->scolor[i] = ctx->clearColor;
-                ctx->sdepth[i] = ctx->clearZ24;
+            /* início de tile: SRAM interna parte do estado de clear.
+               Word por amostra = (z24 << 8) | stencil. */
+            {
+                uint32_t clearWord =
+                    ((ctx->clearZ24 & 0xFFFFFFu) << 8) |
+                    ((uint32_t)ctx->clearStencil & 255u);
+                for (i = 0; i < (int)npix; i++) {
+                    ctx->scolor[i] = ctx->clearColor;
+                    ctx->sdepth[i] = clearWord;
+                }
             }
 
             for (i = 0; i < tl->n; i++)
@@ -158,6 +246,19 @@ void hi_raster_flush(hglCtx *ctx)
                         }
                         ctx->color[(size_t)py * ctx->w + px] =
                             hi_pack_rgba8(sr / ns, sg / ns, sb / ns, sa / ns);
+
+                        /* stencil resolvido: maior valor entre amostras */
+                        if (ctx->stenTest) {
+                            int k2;
+                            uint8_t stv = 0;
+                            size_t base = pix * (size_t)ns;
+                            for (k2 = 0; k2 < ns; k2++) {
+                                uint8_t sv =
+                                    (uint8_t)(ctx->sdepth[base + k2] & 255u);
+                                if (sv > stv) stv = sv;
+                            }
+                            ctx->stencilOut[(size_t)py * ctx->w + px] = stv;
+                        }
                     }
             }
         }

@@ -1,74 +1,60 @@
-# Hot-ice — Renderizador de Referência (C99)
+# Hot-ice — Renderizador de referência (C99)
 
-Implementação em software da arquitetura **Homotopia** descrita em
-`../Hot-ice-gpu-dossie.md`: a GPU fictícia da MontêLauro que equipa o
-console **SnowFlame** (1999). É o "modelo de ouro" funcional contra o qual
-um futuro simulador de sistema/emulador será validado.
+Implementação da GPU **Hot-ice** (arquitetura *Homotopia*, MontêLauro)
+descrita em `../Hot-ice-gpu-dossie.md`, como biblioteca C99 sem dependências
+externas + API convencional estilo OpenGL (**HGL**) + suíte de testes +
+demos que gravam PNG.
 
-## Build e execução
+## Status
+
+| Componente do dossiê | Estado | Onde |
+|---|---|---|
+| TBR — tiles 32×32, color+Z em scratch, resolve p/ framebuffer | ✅ | `src/raster.c` |
+| CAA — AA por tile quase grátis (grades rotacionadas 2×/4×) | ✅ | `src/context.c`, `raster.c` |
+| HDE — T&L unificado: morph targets + skinning + Gouraud | ✅ | `src/hde.c` |
+| CCB — culling por continuidade (versão simplificada: bbox/clip) | ⚠️ parcial | `hde.c` |
+| HIQTC — compressão de textura 4:1 (âncoras RGB565, PCA) | ✅ | `src/hiqtc.c` |
+| Mipmaps + filtragem trilinear analítica | ✅ | `src/texture.c` |
+| Depth 24 bits + stencil 8 (word por amostra `(z24<<8)|st`) | ✅ | `raster.c` |
+| Clipping homogêneo no near (Sutherland–Hodgman) | ✅ | `hde.c` |
+| API HGL (matrizes, texturas, stencil, stats, PNG out) | ✅ | `include/hotice/hgl.h` |
+| Testes automatizados | ✅ **28/28** | `tests/test_main.c` |
+
+## Build
 
 ```sh
-make          # biblioteca + testes + demos
-make test     # roda a suíte (17 verificações)
-make run-demos
+make            # lib + testes
+./build/test_all
+make run-demos  # gera build/demo0{1..4}.png
 ```
 
-Saídas: `build/demo01.png` (TBR + morfing HDE + chão HIQTC, CAA 2×),
-`build/demo02.png` (RGBA8 vs HIQTC lado a lado + PSNR no console).
+## Demos
 
-## Estrutura
+| Demo | Mostra | Verificação |
+|---|---|---|
+| `demo01_tbr_morph` | cena completa: chão HIQTC com trilinear, esfera morfando (HDE), CAA 2× | mapa visual; tris in/out no console |
+| `demo02_hiqtc` | mesma cena RGBA8 vs HIQTC lado a lado | PSNR impresso ≈ 34.2 dB |
+| `demo03_mipmap` | campo distante sem mip vs trilinear | Laplaciano médio 131 → 62 (~2.1× mais suave) |
+| `demo04_reflection` | reflexão planar via stencil multipasse intra-frame | centróides obj/refl ≈ iguais; reflexo confinado ao espelho |
 
-| Arquivo | Papel |
-|---|---|
-| `include/hotice/types.h` | Matemática: vec/mat row-major, perspectiva/lookat, ponto fixo 16.16, empacotamento de cor |
-| `include/hotice/hgl.h` | API pública **HGL** — face convencional (estilo Glide/DirectX) |
-| `src/internal.h` | Estruturas internas (tiles, triângulos binados, contexto) |
-| `src/hde.c` | **HDE**: morfing contínuo → skinning (palette 8 ossos) → T&L → clip near → viewport |
-| `src/raster.c` | **TBR**: bins 32×32, raster por amostra (CAA), depth LESS, resolve |
-| `src/hiqtc.c` | Codec **HIQTC** 4:1 (âncoras RGB565 + índices 2bpp, eixo principal via power iteration) |
-| `src/texture.c` | Sampler nearest/bilinear, wrap repeat/clamp, RGBA8 e HIQTC |
-| `src/context.c` | Contexto, disciplina de frame (begin binando / end processando tiles) |
-| `src/hgl.c` | Estado HGL + leitura de pixels + gravação PNG |
-| `src/hipng.c` | Escritor PNG sem dependências (deflate stored) |
+## Decisões documentadas
 
-## Decisões da versão 0 (documentadas)
+- **Regra de preenchimento top-left** real (`HI_EDGE_OK`): elimina rachaduras E
+  repintadas em arestas compartilhadas sem depender do teste de depth.
+- **Estado de stencil congelado por draw** na submissão (como a textura):
+  multipasse funciona dentro de um frame trocando o estado entre draws.
+  Depth/stencil reiniciam dos valores de clear a cada `FrameBegin`
+  (equivalente a "limpar todo frame", padrão comum em consoles).
+- **Luz**: `hglLightDirf` recebe o vetor **apontando para a luz**, em espaço
+  da câmera (transforme a direção do mundo pela rotação da view).
+  Iluminação é Gouraud (por vértice), como o HDE propõe.
+- **Mipmaps**: cadeia box-filter RGBA8; trilinear com derivadas analíticas
+  de tela sobre varyings pré-divididos.
+- Simplificações conhecidas: normais não recebem a model matrix separada
+  (iluminação assume espaço câmera já composto); sem backface culling;
+  HIQTC sem modo paleta 8:1 ainda.
 
-- **Regra de aresta estrita (`E > 0`)**: arestas compartilhadas avaliam
-  idêntico dos dois lados; o depth test deduplica o repinte. Sem cracks
-  para geometria opaca (provado pelo teste de cobertura exata).
-- **CAA implementado como supersampling por amostra dentro do tile**
-  (grades 2×/4×), resolvido antes de tocar o framebuffer — referência
-  honesta do comportamento "banda quase grátis" do silício proposto.
-- **Iluminação Gouraud por vértice** (o que a HDE faria em hardware);
-  per-pixel fica para fase posterior.
-- **Clip apenas do near plane** (Sutherland–Hodgman em clip space);
-  laterais/topo são recortados por scissor do bbox.
-- **Sem mipmaps ainda**: campo distante mostra minificação clássica
-  (mistura bilinear em direção à média). Trilinear single-pass é o
-  próximo marco de textura.
+## Próximos passos (roadmap)
 
-## Status contra o dossiê
-
-| Feature do dossiê | Status |
-|---|---|
-| Tiles diferidos 32×32, overdraw ~grátis | ✅ implementado + testado |
-| CAA 2×/4× resolvido por tile | ✅ implementado + testado |
-| HDE morfing contínuo (`hglBindMorphTarget`/`hglMorphWeight`) | ✅ implementado + testado |
-| HDE skinning palette (até 8 ossos/vértice) | ✅ implementado (teste c/ 1 osso) |
-| HDE T&L + clipping | ✅ implementado + testado |
-| HIQTC 4:1 encode/decode | ✅ implementado (PSNR gradiente 36,4 dB) |
-| Cor 32-bit nativa | ✅ |
-| Depth 24-bit LESS | ✅ implementado + testado |
-| Trilinear single-pass / mipmaps | ⬜ próximo |
-| DOT3 bump · stencil 8-bit · env-map | ⬜ |
-| Modo paletizado HIQTC 8:1 · texturas 512²+ | ⬜ |
-| MPEG-2 assistido · saída vídeo | n/a (simulador de sistema) |
-| Ponto fixo 16.16 no caminho quente | ✅ tipos prontos (fronteira HDE) |
-
-## Próximos marcos sugeridos
-
-1. Mipmaps + trilinear single-pass (fecha o artefato de minificação).
-2. Stencil 8-bit operacional + sombra volumétrica de demonstração.
-3. Skinning multi-osso animado na demo (palette por frame).
-4. Barramento modelado (2,29 GB/s, prioridades DMA) → caminho para o
-   simulador de sistema completo com ColdFire V4æ interpretado.
+DOT3 bump por texel · env map cúbico · modo paleta HIQTC 8:1 ·
+texturas ≥512² · modelo DMA/barramento → simulador do sistema ColdFire V4æ.

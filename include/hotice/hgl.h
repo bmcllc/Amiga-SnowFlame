@@ -23,8 +23,17 @@ typedef struct hglTex hglTex;
 typedef enum {
     HGL_LIGHTING   = 1,   /* iluminação difusa por vértice (HDE)      */
     HGL_TEXTURE_2D = 2,   /* mapeamento de textura                    */
-    HGL_SKINNING   = 4    /* palette esquelética (HDE, até 8 ossos/vtx)*/
+    HGL_SKINNING      = 4,   /* palette esquelética (HDE, até 8 ossos/vtx)*/
+    HGL_STENCIL_TEST  = 8    /* teste de stencil por amostra              */
 } hglCap;
+
+typedef enum {
+    HGL_ST_ALWAYS = 0, HGL_ST_EQUAL, HGL_ST_NEQUAL
+} hglStencilCmp;
+
+typedef enum {
+    HGL_SO_KEEP = 0, HGL_SO_REPLACE, HGL_SO_INCR, HGL_SO_ZERO
+} hglStencilAct;
 
 typedef enum { HGL_MODELVIEW = 0, HGL_PROJECTION = 1 } hglMatrixModeSel;
 
@@ -49,11 +58,18 @@ void     hglDestroyContext(hglCtx *ctx);
 void     hglViewport(hglCtx *ctx, int x, int y, int w, int h);
 void     hglClearColor4f(hglCtx *ctx, float r, float g, float b, float a);
 void     hglClearDepth(hglCtx *ctx, float d);          /* 0..1, padrão 1 */
+void     hglClearStencil(hglCtx *ctx, int s);          /* 0..255, padrão 0 */
+
+/* stencil: função/comparação + operação aplicada quando o fragmento passa
+   (referência simplificada: falha de stencil/depth sempre preserva)      */
+void     hglStencilFunc(hglCtx *ctx, hglStencilCmp f, int ref);
+void     hglStencilOp(hglCtx *ctx, hglStencilAct op);
 
 void     hglFrameBegin(hglCtx *ctx);   /* abre frame: limpa bins/tris    */
 void     hglFrameEnd(hglCtx *ctx);     /* fecha: processa tiles (TBR)    */
 
 uint32_t *hglColorBuffer(hglCtx *ctx); /* leitura pós-FrameEnd (packed)  */
+void     hglGetSize(hglCtx *ctx, int *w, int *h);
 int       hglSavePNG(hglCtx *ctx, const char *path);
 int       hglSavePNGBuffer(const char *path, int w, int h, const uint32_t *pix);
 
@@ -80,6 +96,7 @@ void     hglAmbient4f(hglCtx *ctx, float r, float g, float b, float a_);
 /* ----------------------------------------------------------- texturas */
 hglTex  *hglTexCreateRGBA8(int w, int h, const uint32_t *pixels_packed);
 hglTex  *hglTexCreateHIQTCFromRGBA8(int w, int h, const uint32_t *pixels_packed);
+int      hglTexGenerateMipmaps(hglTex *tex);   /* cadeia box-filter p/ trilinear */
 void     hglTexDestroy(hglTex *tex);
 void     hglTexFilter(hglTex *tex, hglFilter f);
 void     hglTexWrap(hglTex *tex, hglWrap w);

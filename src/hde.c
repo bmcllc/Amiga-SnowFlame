@@ -54,7 +54,9 @@ void hi_hde_vertex(hglCtx *ctx, const hglVertex *in, uint32_t vid,
     /* --- modelview --- */
     world = hi_mat_xform(&ctx->mv, hi_v4(p.x, p.y, p.z, 1.0f));
 
-    /* --- iluminação difusa por vértice (Gouraud, como o HDE faria) --- */
+    /* --- iluminação difusa por vértice (Gouraud, como o HDE faria).
+       SEMÂNTICA: lightDir APONTA PARA A LUZ e é dado em ESPAÇO DA CÂMERA
+       (as demos transformam a direção do mundo pela rotação da view). --- */
     if (ctx->capLighting) {
         hiVec3 nw = hi_v3_norm(hi_mat_dir(&ctx->mv, n));
         hiVec3 L = hi_v3_norm(hi_v3(ctx->lightDir[0], ctx->lightDir[1],
@@ -160,6 +162,10 @@ void hi_geom_submit(hglCtx *ctx, const hglVertex vin[3], const uint32_t vid[3])
         project_to_screen(ctx, &poly[i],     &tri.v[1]);
         project_to_screen(ctx, &poly[i + 1], &tri.v[2]);
         tri.tex = ctx->capTexture ? ctx->texBound : NULL;
+        tri.stTest = (unsigned char)ctx->stenTest;
+        tri.stFunc = (unsigned char)ctx->stenFunc;
+        tri.stRef  = (unsigned char)ctx->stenRef;
+        tri.stOp   = (unsigned char)ctx->stenOp;
 
         /* bbox clampada ao viewport */
         {

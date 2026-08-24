@@ -390,6 +390,172 @@ static void test_sampler_wrap(void)
     hglTexDestroy(t);
 }
 
+
+/* ---------------------------------------------------------- mipmaps */
+static void test_mipmap_chain(void)
+{
+    uint32_t px[64];
+    hglTex *t;
+    int lvls, x, y;
+    uint32_t c3;
+
+    for (y = 0; y < 8; y++)
+        for (x = 0; x < 8; x++)
+            px[y * 8 + x] = (y < 4) ? hi_pack_rgba8(255, 0, 0, 255)
+                                    : hi_pack_rgba8(0, 0, 255, 255);
+    t = hglTexCreateRGBA8(8, 8, px);
+    lvls = hglTexGenerateMipmaps(t);
+
+    CHECK(lvls == 4 && t->nlevels == 4, "mips: cadeia 8->4->2->1");
+    CHECK(t->lw[1] == 4 && t->lh[1] == 4 && t->lw[3] == 1,
+          "mips: dimensões por nível");
+
+    /* nível 1: metade vermelha, metade azul (fronteira alinhada) */
+    {
+        int ok = 1, i;
+        for (i = 0; i < 8; i++) {
+            uint32_t c = t->lv[1][i];
+            int r, g, b, a;
+            hi_unpack_rgba8(c, &r, &g, &b, &a);
+            if (i < 8 && g != 0) ok = 0; /* canal G sempre 0 */
+        }
+        CHECK(ok, "mips: nível 1 preserva tons puros");
+    }
+
+    /* nível final 1x1: média exata de 2 vermelhos + 2 azuis = (128,0,128) */
+    c3 = t->lv[3][0];
+    {
+        int r, g, b, a;
+        hi_unpack_rgba8(c3, &r, &g, &b, &a);
+        CHECK(r == 128 && b == 128 && g == 0,
+              "mips: média box-filter exata no nível 1x1");
+    }
+    hglTexDestroy(t);
+}
+
+static void test_trilinear_levels(void)
+{
+    uint32_t px[64];
+    hglTex *t;
+    uint32_t mag, far_;
+    int x, y;
+
+    for (y = 0; y < 8; y++)
+        for (x = 0; x < 8; x++)
+            px[y * 8 + x] = (y < 4) ? hi_pack_rgba8(255, 0, 0, 255)
+                                    : hi_pack_rgba8(0, 0, 255, 255);
+    t = hglTexCreateRGBA8(8, 8, px);
+    hglTexGenerateMipmaps(t);
+
+    /* ampliação (rho<1): deve ser idêntico ao caminho bilinear nível 0 */
+    mag = hi_sample_tex_mip(t, 0.25f, 0.25f, 0.5f);
+    CHECK(mag == hi_sample_tex(t, 0.25f, 0.25f),
+          "trilinear: ampliação usa nível base");
+
+    /* minificação extrema (lambda clampado no último nível):
+       qualquer uv retorna a cor média da cadeia */
+    far_ = hi_sample_tex_mip(t, 0.7f, 0.9f, 4096.0f);
+    CHECK(far_ == hi_pack_rgba8(128, 0, 128, 255),
+          "trilinear: minificação extrema cai no nível médio");
+    hglTexDestroy(t);
+}
+
+/* --------------------------------------------------------- stencil */
+static void fill_rect_px(hglCtx *ctx, hglVertex v[4],
+                         int x0, int y0, int x1, int y1,
+                         float r, float g, float bl)
+{
+    int W = ctx->w, H = ctx->h, i;
+    float nx[4], ny[4];
+    float sx[4] = { (float)x0, (float)x1, (float)x1, (float)x0 };
+    float sy[4] = { (float)y0, (float)y0, (float)y1, (float)y1 };
+    memset(v, 0, sizeof(hglVertex) * 4);
+    for (i = 0; i < 4; i++) {
+        nx[i] = 2.0f * sx[i] / W - 1.0f;
+        ny[i] = 1.0f - 2.0f * sy[i] / H;
+        v[i].pos[0] = nx[i]; v[i].pos[1] = ny[i]; v[i].pos[2] = -0.5f;
+        v[i].col[0] = r; v[i].col[1] = g; v[i].col[2] = bl; v[i].col[3] = 1;
+    }
+}
+
+static void test_stencil(void)
+{
+    const uint32_t idx[6] = { 0, 1, 2, 0, 2, 3 };
+    hglVertex q[4];
+    hglCtx *ctx = hglCreateContext(32, 32, 1);
+    const uint8_t *st;
+
+    hglClearColor4f(ctx, 0, 0, 0, 1);
+    hglEnable(ctx, HGL_STENCIL_TEST);
+
+    /* 1) máscara isolada: REPLACE grava ref na região */
+    hglStencilFunc(ctx, HGL_ST_ALWAYS, 1);
+    hglStencilOp(ctx, HGL_SO_REPLACE);
+    fill_rect_px(ctx, q, 4, 4, 16, 16, 1, 1, 1);
+    hglFrameBegin(ctx);
+    hglDrawTrianglesIndexed(ctx, 6, idx, q);
+    hglFrameEnd(ctx);
+    st = ctx->stencilOut;
+    CHECK(st[8 * 32 + 8] == 1 && st[24 * 32 + 24] == 0,
+          "stencil: REPLACE grava ref na região");
+
+    /* 2) uso da máscara NO MESMO frame (multipasse intra-frame por design
+       do TBR): estado trocado ENTRE os draws — cada draw congela o seu */
+    fill_rect_px(ctx, q, 4, 4, 16, 16, 1, 1, 1);
+    {
+        hglVertex big[3];
+        uint32_t ti[3] = { 0, 1, 2 };
+        memset(big, 0, sizeof(big));
+        big[0].pos[0] = -2; big[0].pos[1] = -2; big[0].pos[2] = -0.6f;
+        big[1].pos[0] =  4; big[1].pos[1] = -2; big[1].pos[2] = -0.6f;
+        big[2].pos[0] = -2; big[2].pos[1] =  4; big[2].pos[2] = -0.6f;
+        big[0].col[0] = big[1].col[0] = big[2].col[0] = 1;
+        big[0].col[3] = big[1].col[3] = big[2].col[3] = 1;
+
+        hglStencilFunc(ctx, HGL_ST_ALWAYS, 1);   /* passe máscara */
+        hglStencilOp(ctx, HGL_SO_REPLACE);
+        hglFrameBegin(ctx);
+        hglDrawTrianglesIndexed(ctx, 6, idx, q);
+
+        hglStencilFunc(ctx, HGL_ST_EQUAL, 1);    /* passe uso */
+        hglStencilOp(ctx, HGL_SO_KEEP);
+        hglDrawTrianglesIndexed(ctx, 3, ti, big);
+        hglFrameEnd(ctx);
+    }
+    {
+        const uint32_t *cb = hglColorBuffer(ctx);
+        int r, g, b, a;
+        hi_unpack_rgba8(cb[8 * 32 + 8], &r, &g, &b, &a);
+        CHECK(r == 255, "stencil: EQUAL pinta dentro da máscara");
+        hi_unpack_rgba8(cb[24 * 32 + 24], &r, &g, &b, &a);
+        CHECK(r == 0, "stencil: EQUAL bloqueia fora da máscara");
+    }
+
+    /* INCR com saturação + ZERO */
+    hglClearStencil(ctx, 254);
+    hglStencilFunc(ctx, HGL_ST_ALWAYS, 0);
+    hglStencilOp(ctx, HGL_SO_INCR);
+    fill_rect_px(ctx, q, 20, 20, 28, 28, 0, 1, 0);
+    hglFrameBegin(ctx);   /* clear stencil=254 */
+    hglDrawTrianglesIndexed(ctx, 6, idx, q);
+    hglDrawTrianglesIndexed(ctx, 6, idx, q); /* segunda passada satura em 255 */
+    hglFrameEnd(ctx);
+    st = ctx->stencilOut;
+    CHECK(st[24 * 32 + 24] == 255, "stencil: INCR satura em 255");
+
+    hglClearStencil(ctx, 5);
+    hglStencilOp(ctx, HGL_SO_ZERO);
+    hglFrameBegin(ctx);   /* clear stencil=5 */
+    hglDrawTrianglesIndexed(ctx, 6, idx, q);
+    hglFrameEnd(ctx);
+    st = ctx->stencilOut;
+    CHECK(st[24 * 32 + 24] == 0 && st[2 * 32 + 2] == 5,
+          "stencil: ZERO zera fragmentos e clear preserva o resto");
+
+    hglDisable(ctx, HGL_STENCIL_TEST);
+    hglDestroyContext(ctx);
+}
+
 int main(void)
 {
     printf("== Hot-ice: suíte de testes ==\n");
@@ -402,6 +568,9 @@ int main(void)
     test_near_clip();
     test_caa_levels();
     test_sampler_wrap();
+    test_mipmap_chain();
+    test_trilinear_levels();
+    test_stencil();
 
     printf("\n%d verificações, %d falhas\n", g_run, g_fail);
     return g_fail ? 1 : 0;

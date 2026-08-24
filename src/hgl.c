@@ -69,6 +69,7 @@ void hglEnable(hglCtx *ctx, hglCap cap)
     if (cap == HGL_LIGHTING)   ctx->capLighting = 1;
     if (cap == HGL_TEXTURE_2D) ctx->capTexture = 1;
     if (cap == HGL_SKINNING)   ctx->capSkinning = 1;
+    if (cap == HGL_STENCIL_TEST) ctx->stenTest = 1;
 }
 void hglDisable(hglCtx *ctx, hglCap cap)
 {
@@ -76,6 +77,7 @@ void hglDisable(hglCtx *ctx, hglCap cap)
     if (cap == HGL_LIGHTING)   ctx->capLighting = 0;
     if (cap == HGL_TEXTURE_2D) ctx->capTexture = 0;
     if (cap == HGL_SKINNING)   ctx->capSkinning = 0;
+    if (cap == HGL_STENCIL_TEST) ctx->stenTest = 0;
 }
 
 void hglGetStats(hglCtx *ctx, int *trisIn, int *trisOut)

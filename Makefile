@@ -9,7 +9,8 @@ LIB_SRCS := src/context.c src/hde.c src/raster.c src/texture.c \
             src/hiqtc.c src/hgl.c src/hipng.c
 LIB_OBJS := $(LIB_SRCS:src/%.c=build/%.o)
 
-DEMOS := build/demo01_tbr_morph build/demo02_hiqtc
+DEMOS := build/demo01_tbr_morph build/demo02_hiqtc \
+         build/demo03_mipmap build/demo04_reflection
 
 .PHONY: all lib test demos run-demos clean
 

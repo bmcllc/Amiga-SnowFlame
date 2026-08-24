@@ -97,6 +97,42 @@ static inline float *dc_dent_targets(const hglVertex *base, int nv,
     return t;
 }
 
+/* cubo unitário centrado na origem (24 vértices, normais por face) */
+static inline void dc_gen_cube(hglVertex **outVerts, uint32_t **outIdx,
+                               int *outNv, int *outNi,
+                               float r, float g, float b)
+{
+    static const float N[6][3] = {
+        { 0, 0, 1}, { 0, 0,-1}, { 1, 0, 0}, {-1, 0, 0}, { 0, 1, 0}, { 0,-1, 0}
+    };
+    static const float V[6][4][3] = {
+        {{-.5,-.5, .5},{ .5,-.5, .5},{ .5, .5, .5},{-.5, .5, .5}},
+        {{ .5,-.5,-.5},{-.5,-.5,-.5},{-.5, .5,-.5},{ .5, .5,-.5}},
+        {{ .5,-.5, .5},{ .5,-.5,-.5},{ .5, .5,-.5},{ .5, .5, .5}},
+        {{-.5,-.5,-.5},{-.5,-.5, .5},{-.5, .5, .5},{-.5, .5,-.5}},
+        {{-.5, .5, .5},{ .5, .5, .5},{ .5, .5,-.5},{-.5, .5,-.5}},
+        {{-.5,-.5,-.5},{ .5,-.5,-.5},{ .5,-.5, .5},{-.5,-.5, .5}}
+    };
+    hglVertex *v = (hglVertex *)calloc(24, sizeof(hglVertex));
+    uint32_t *ix = (uint32_t *)malloc(sizeof(uint32_t) * 36);
+    int f, i, ni = 0;
+    for (f = 0; f < 6; f++)
+        for (i = 0; i < 4; i++) {
+            hglVertex *vv = &v[f * 4 + i];
+            vv->pos[0] = V[f][i][0]; vv->pos[1] = V[f][i][1]; vv->pos[2] = V[f][i][2];
+            vv->nrm[0] = N[f][0]; vv->nrm[1] = N[f][1]; vv->nrm[2] = N[f][2];
+            vv->uv[0] = (i == 1 || i == 2) ? 1.0f : 0.0f;
+            vv->uv[1] = (i >= 2) ? 1.0f : 0.0f;
+            vv->col[0] = r; vv->col[1] = g; vv->col[2] = b; vv->col[3] = 1;
+        }
+    for (f = 0; f < 6; f++) {
+        uint32_t o = (uint32_t)(f * 4);
+        ix[ni++]=o;   ix[ni++]=o+1; ix[ni++]=o+2;
+        ix[ni++]=o;   ix[ni++]=o+2; ix[ni++]=o+3;
+    }
+    *outVerts = v; *outIdx = ix; *outNv = 24; *outNi = 36;
+}
+
 /* textura procedural colorida (gradiente + círculo + faixas) */
 static inline uint32_t *dc_pattern(int w, int h)
 {

@@ -48,9 +48,11 @@ hglCtx *hglCreateContext(int width, int height, int samples)
         size_t scratch = (size_t)HI_TILE * HI_TILE * (size_t)ctx->samples;
         ctx->scolor = (uint32_t *)malloc(scratch * sizeof(uint32_t));
         ctx->sdepth = (uint32_t *)malloc(scratch * sizeof(uint32_t));
+        ctx->stencilOut = (uint8_t *)calloc((size_t)width * height, 1);
     }
 
-    if (!ctx->color || !ctx->tiles || !ctx->scolor || !ctx->sdepth) {
+    if (!ctx->color || !ctx->tiles || !ctx->scolor || !ctx->sdepth ||
+        !ctx->stencilOut) {
         hglDestroyContext(ctx);
         return NULL;
     }
@@ -58,6 +60,11 @@ hglCtx *hglCreateContext(int width, int height, int samples)
     hglViewport(ctx, 0, 0, width, height);
     ctx->clearColor = hi_pack_rgba8(0, 0, 0, 255);
     ctx->clearZ24 = 0xFFFFFFu;
+    ctx->clearStencil = 0;
+    ctx->stenTest = 0;
+    ctx->stenFunc = HGL_ST_ALWAYS;
+    ctx->stenRef = 0;
+    ctx->stenOp = HGL_SO_KEEP;
 
     hi_mat_identity(&ctx->mv);
     hi_mat_identity(&ctx->proj);
@@ -107,6 +114,28 @@ void hglClearDepth(hglCtx *ctx, float d)
     ctx->clearZ24 = (uint32_t)(d * 16777215.0f);
 }
 
+void hglClearStencil(hglCtx *ctx, int s)
+{
+    if (!ctx) return;
+    if (s < 0) s = 0;
+    if (s > 255) s = 255;
+    ctx->clearStencil = s;
+}
+
+void hglStencilFunc(hglCtx *ctx, hglStencilCmp f, int ref)
+{
+    if (!ctx) return;
+    ctx->stenFunc = (int)f;
+    if (ref < 0) ref = 0;
+    if (ref > 255) ref = 255;
+    ctx->stenRef = ref;
+}
+
+void hglStencilOp(hglCtx *ctx, hglStencilAct op)
+{
+    if (ctx) ctx->stenOp = (int)op;
+}
+
 void hglFrameBegin(hglCtx *ctx)
 {
     size_t i, n;
@@ -115,8 +144,12 @@ void hglFrameBegin(hglCtx *ctx)
     ctx->statsTrisIn = ctx->statsTrisOut = 0;
     n = (size_t)ctx->tx * (size_t)ctx->ty;
     for (i = 0; i < n; i++) ctx->tiles[i].n = 0;
-    /* fora do viewport permanece estável entre frames */
-    memset(ctx->color, 0, (size_t)ctx->w * (size_t)ctx->h * sizeof(uint32_t));
+    /* fundo integralmente com a cor de clear */
+    {
+        size_t total = (size_t)ctx->w * (size_t)ctx->h;
+        for (i = 0; i < total; i++) ctx->color[i] = ctx->clearColor;
+        memset(ctx->stencilOut, (unsigned)ctx->clearStencil, total);
+    }
 }
 
 void hglFrameEnd(hglCtx *ctx)
@@ -128,4 +161,11 @@ void hglFrameEnd(hglCtx *ctx)
 uint32_t *hglColorBuffer(hglCtx *ctx)
 {
     return ctx ? ctx->color : NULL;
+}
+
+void hglGetSize(hglCtx *ctx, int *w, int *h)
+{
+    if (!ctx) return;
+    if (w) *w = ctx->w;
+    if (h) *h = ctx->h;
 }

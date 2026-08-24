@@ -168,6 +168,19 @@ uint8_t *hi_hiqtc_encode_rgba8(int w, int h, const uint32_t *pix)
     return out;
 }
 
+uint32_t *hi_hiqtc_decode_all(const hglTex *t)
+{
+    uint32_t *out;
+    int x, y;
+    if (!t || t->fmt != HI_FMT_HIQTC) return NULL;
+    out = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)t->w * t->h);
+    if (!out) return NULL;
+    for (y = 0; y < t->h; y++)
+        for (x = 0; x < t->w; x++)
+            out[(size_t)y * t->w + x] = hi_hiqtc_decode_texel(t, x, y);
+    return out;
+}
+
 uint32_t hi_hiqtc_decode_texel(const hglTex *t, int x, int y)
 {
     int bw = t->w / 4;
