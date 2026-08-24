@@ -1,7 +1,7 @@
 # Hot-ice — Renderizador de referência (C99)
 
 Implementação da GPU **Hot-ice** (arquitetura *Homotopia*, MontêLauro)
-descrita em `../Hot-ice-gpu-dossie.md`, como biblioteca C99 sem dependências
+descrita em `../../Hot-ice-gpu-dossie.md`, como biblioteca C99 sem dependências
 externas + API convencional estilo OpenGL (**HGL**) + suíte de testes +
 demos que gravam PNG.
 
@@ -64,7 +64,7 @@ make run-demos  # gera build/demo0{1..4}.png
   (iluminação assume espaço câmera já composto); sem backface culling.
 - CPU SnowFlame: ColdFire V4æ (V4e Amiga Enhanced) com unidades MontêLauro
   MLVU (vetores · versores · ponto fixo quantizado) e MAPU (física analítica).
-  Ver `../../ColdFire-V4ae-cpu-dossie.md` (raiz do projeto SnowFlame).
+  Ver `../../../cpu/ColdFire-V4ae-cpu-dossie.md` (raiz do projeto SnowFlame).
 - MAPU implementado como referência host (ponto flutuante) validando a especificação
   Q16.16 do dossiê V4æ; a versão fixa determinística é descrita no microcode
   do MAPU (CORDIC 16 iterações, aritmética saturada).
