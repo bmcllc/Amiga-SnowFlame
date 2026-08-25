@@ -142,6 +142,8 @@ void hglFrameBegin(hglCtx *ctx)
     if (!ctx) return;
     ctx->triCount = 0;
     ctx->statsTrisIn = ctx->statsTrisOut = 0;
+    ctx->ccbPatches = ctx->ccbRejFrustum = ctx->ccbRejBackface = 0;
+    ctx->ccbVertsSaved = ctx->ccbVertsDone = 0;
     n = (size_t)ctx->tx * (size_t)ctx->ty;
     for (i = 0; i < n; i++) ctx->tiles[i].n = 0;
     /* fundo integralmente com a cor de clear */

@@ -777,6 +777,191 @@ static void test_hiqtc_p8(void)
     }
 }
 
+/* =====================================================================
+ * CCB — Continuity Coherence Buffer (dossiê §2.2)
+ * ===================================================================== */
+
+/* cubo axis-aligned: 24 vértices (4 por face, normais planas), 36 índices */
+static void make_cube(hglVertex *v, uint32_t *idx,
+                      float cx, float cy, float cz, float s,
+                      float r, float g, float b, uint32_t base)
+{
+    static const float N[6][3] = {
+        {0,0,1},{0,0,-1},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0}
+    };
+    static const float F[6][4][3] = {
+        {{-1,-1, 1},{ 1,-1, 1},{ 1, 1, 1},{-1, 1, 1}},   /* +z */
+        {{ 1,-1,-1},{-1,-1,-1},{-1, 1,-1},{ 1, 1,-1}},   /* -z */
+        {{ 1,-1, 1},{ 1,-1,-1},{ 1, 1,-1},{ 1, 1, 1}},   /* +x */
+        {{-1,-1,-1},{-1,-1, 1},{-1, 1, 1},{-1, 1,-1}},   /* -x */
+        {{-1, 1, 1},{ 1, 1, 1},{ 1, 1,-1},{-1, 1,-1}},   /* +y */
+        {{-1,-1,-1},{ 1,-1,-1},{ 1,-1, 1},{-1,-1, 1}},   /* -y */
+    };
+    int f, i;
+    for (f = 0; f < 6; f++) {
+        for (i = 0; i < 4; i++) {
+            hglVertex *vv = &v[f * 4 + i];
+            memset(vv, 0, sizeof(*vv));
+            vv->pos[0] = cx + F[f][i][0] * s;
+            vv->pos[1] = cy + F[f][i][1] * s;
+            vv->pos[2] = cz + F[f][i][2] * s;
+            vv->nrm[0] = N[f][0]; vv->nrm[1] = N[f][1]; vv->nrm[2] = N[f][2];
+            vv->col[0] = r; vv->col[1] = g; vv->col[2] = b; vv->col[3] = 1;
+        }
+        idx[f*6+0] = base+(uint32_t)f*4+0;
+        idx[f*6+1] = base+(uint32_t)f*4+1;
+        idx[f*6+2] = base+(uint32_t)f*4+2;
+        idx[f*6+3] = base+(uint32_t)f*4+0;
+        idx[f*6+4] = base+(uint32_t)f*4+2;
+        idx[f*6+5] = base+(uint32_t)f*4+3;
+    }
+}
+
+static void test_ccb(void)
+{
+    /* --- conectividade: quad compartilhado = 1 patch ------------------- */
+    {
+        hglVertex v[4];
+        uint32_t idx[6] = { 0,1,2, 0,2,3 };
+        hglCcbMesh *m;
+        memset(v, 0, sizeof(v));
+        v[0].pos[0]=0; v[0].pos[1]=0; v[1].pos[0]=2; v[1].pos[1]=0;
+        v[2].pos[0]=2; v[2].pos[1]=2; v[3].pos[0]=0; v[3].pos[1]=2;
+        m = hglCcbBuild(v, 4, idx, 6, 64);
+        CHECK(m && hglCcbPatchCount(m) == 1,
+              "ccb: quad de 2 tris conectados = 1 patch");
+        CHECK(m && fabsf(m->centroid[0][0] - 1.0f) < 1e-5f &&
+                   fabsf(m->centroid[0][1] - 1.0f) < 1e-5f,
+              "ccb: centróide do patch ponderado por área é o centro real");
+        hglCcbDestroy(m);
+    }
+    /* --- blobs disjuntos = patches distintos --------------------------- */
+    {
+        hglVertex v[8];
+        uint32_t idx[12] = { 0,1,2, 0,2,3,   4,5,6, 4,6,7 };
+        hglCcbMesh *m;
+        memset(v, 0, sizeof(v));
+        m = hglCcbBuild(v, 8, idx, 12, 64);
+        CHECK(m && hglCcbPatchCount(m) == 2,
+              "ccb: blobs disjuntos geram patches distintos");
+        hglCcbDestroy(m);
+    }
+    /* --- chunk respeita maxPatchTris ----------------------------------- */
+    {
+        enum { COLS = 4 };
+        hglVertex v[COLS * 2];
+        uint32_t idx[COLS * 6];
+        hglCcbMesh *m;
+        int i, ok = 1, total = 0;
+        memset(v, 0, sizeof(v));
+        /* fita de COLS quads: coluna k usa verts {k,k+1,COLS+k,COLS+k+1} */
+        for (i = 0; i < COLS; i++) {
+            idx[i*6+0]=(uint32_t)i;          idx[i*6+1]=(uint32_t)(i+1);
+            idx[i*6+2]=(uint32_t)(COLS+i+1); idx[i*6+3]=(uint32_t)i;
+            idx[i*6+4]=(uint32_t)(COLS+i+1); idx[i*6+5]=(uint32_t)(COLS+i);
+        }
+        m = hglCcbBuild(v, COLS*2, idx, COLS*6, 3);
+        CHECK(m && hglCcbPatchCount(m) > 1,
+              "ccb: chunk divide componente grande");
+        for (i = 0; i < hglCcbPatchCount(m); i++)
+            if ((int)m->patches[i].count > 3) ok = 0;
+        for (i = 0; i < hglCcbPatchCount(m); i++)
+            total += (int)m->patches[i].count;
+        CHECK(ok, "ccb: nenhum patch excede maxPatchTris");
+        CHECK(total == COLS * 2, "ccb: todos os triângulos atribuídos");
+        hglCcbDestroy(m);
+    }
+    /* --- frustum por patch: objeto fora inteiro não manda vértice ------ */
+    {
+        hglVertex va[24], vb[24];
+        uint32_t ia[36], ib[36], all[72];
+        hglVertex allv[48];
+        hglCcbMesh *m;
+        hglCtx *ctx = hglCreateContext(64, 64, 1);
+        hglCcbStats st;
+
+        make_cube(va, ia,  0, 0, -6, 1, 0, 1, 0, 0);   /* visível           */
+        make_cube(vb, ib, 30, 0, -6, 1, 1, 0, 0, 24);  /* totalmente à dir. */
+        memcpy(allv, va, sizeof(va));
+        memcpy(allv + 24, vb, sizeof(vb));
+        memcpy(all, ia, sizeof(ia));
+        memcpy(all + 36, ib, sizeof(ib));
+
+        hglMatrixMode(ctx, HGL_PROJECTION);
+        hglLoadIdentity(ctx);
+        hglPerspective(ctx, 60.0f * (float)HI_PI / 180.0f, 1.0f, 0.1f, 100.0f);
+        hglMatrixMode(ctx, HGL_MODELVIEW);
+        hglLoadIdentity(ctx);
+
+        m = hglCcbBuild(allv, 48, all, 72, 2);
+        hglClearColor4f(ctx, 0, 0, 0, 1);
+        hglFrameBegin(ctx);
+        hglDrawCcbMesh(ctx, m, allv);
+        hglFrameEnd(ctx);
+        hglCcbLastStats(ctx, &st);
+
+        printf("     ccb frustum: patches=%d rejF=%d salvos=%d feitos=%d\n",
+               st.patches, st.rejFrustum, st.vertsSaved, st.vertsDone);
+        CHECK(st.rejFrustum == 6,
+              "ccb: cubo externo é rejeitado patch a patch pelo frustum");
+        /* externo: 6 faces × 4 verts = 24 salvos; interno: só a face frontal
+           fica (as outras 5 caem pelo cone) → +20 salvos, 4 processados    */
+        CHECK(st.vertsSaved == 44 && st.vertsDone == 4,
+              "ccb: vértices dos patches rejeitados nunca saem do stream");
+        CHECK(st.trisSubmitted == 2,
+              "ccb: só os triângulos visíveis entram no pipeline");
+        hglCcbDestroy(m);
+
+        /* --- saída bit-idêntica ao caminho direto (mesma cena) ---------- */
+        {
+            const uint32_t *direct, *via;
+            hglFrameBegin(ctx);
+            hglDrawTrianglesIndexed(ctx, 72, all, allv);
+            hglFrameEnd(ctx);
+            direct = hglColorBuffer(ctx);
+
+            m = hglCcbBuild(allv, 48, all, 72, 2);
+            hglFrameBegin(ctx);
+            hglDrawCcbMesh(ctx, m, allv);
+            hglFrameEnd(ctx);
+            via = hglColorBuffer(ctx);
+
+            CHECK(memcmp(direct, via, 64 * 64 * sizeof(uint32_t)) == 0,
+                  "ccb: saída bit-idêntica ao caminho direto");
+            hglCcbDestroy(m);
+        }
+        hglDestroyContext(ctx);
+    }
+    /* --- cone de normais: faces traseiras caem em lote ------------------ */
+    {
+        hglVertex v[24];
+        uint32_t idx[36];
+        hglCcbMesh *m;
+        hglCtx *ctx = hglCreateContext(32, 32, 1);
+        hglCcbStats st;
+
+        make_cube(v, idx, 0, 0, -5, 1, 1, 1, 1, 0);
+        hglMatrixMode(ctx, HGL_PROJECTION);
+        hglLoadIdentity(ctx);
+        hglPerspective(ctx, 60.0f * (float)HI_PI / 180.0f, 1.0f, 0.1f, 100.0f);
+        hglMatrixMode(ctx, HGL_MODELVIEW);
+        hglLoadIdentity(ctx);
+
+        m = hglCcbBuild(v, 24, idx, 36, 2);   /* 1 patch = 1 face plana      */
+        hglClearColor4f(ctx, 0, 0, 0, 1);
+        hglFrameBegin(ctx);
+        hglDrawCcbMesh(ctx, m, v);
+        hglFrameEnd(ctx);
+        hglCcbLastStats(ctx, &st);
+        printf("     ccb backface: patches=%d rejB=%d\n",
+               st.patches, st.rejBackface);
+        CHECK(st.rejBackface == 5,
+              "ccb: só a face frontal sobrevive ao cone de normais");
+        hglCcbDestroy(m);
+        hglDestroyContext(ctx);
+    }
+}
+
 extern void test_mapu(void);
 int main(void)
 {
@@ -798,6 +983,7 @@ int main(void)
     test_dot3_bump();
     test_envmap();
     test_hiqtc_p8();
+    test_ccb();
     if (run_sys_tests()) g_fail++;
 
     printf("\n%d verificações, %d falhas\n", g_run, g_fail);

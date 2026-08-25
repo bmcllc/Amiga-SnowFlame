@@ -124,6 +124,36 @@ void     hglDrawTrianglesIndexed(hglCtx *ctx, int nIndices,
                                  const uint32_t *indices,
                                  const hglVertex *vertices);
 
+/* ------------------------------------------ CCB: Continuity Coherence
+   Buffer (dossiê §2.2). Malhas com conectividade intacta são divididas em
+   PATCHES topológicos (union-find sobre arestas, chunk limitado por
+   maxPatchTris). Por draw, cada patch é testado INTEIRO: frustum pelos 8
+   cantos do seu bbox model-space e backface pelo cone de normais — patches
+   rejeitados nunca mandam vértice pelo pipeline (meta do dossiê: 40–60%
+   dos vértices economizados). A saída é bit-idêntica ao caminho direto.
+   Limitação: bbox/cone usam as posições BASE do modelo; malhas cujo
+   morphing/skinning desloque vértices para fora do bbox base devem usar
+   hglDrawTrianglesIndexed.                                              */
+typedef struct hglCcbMesh hglCcbMesh;
+
+typedef struct {
+    int patches;        /* patches avaliados na última draw CCB          */
+    int rejFrustum;     /* descartados inteiros por frustum              */
+    int rejBackface;    /* descartados inteiros por cone de normais      */
+    int trisSubmitted;  /* triângulos que entraram no pipeline           */
+    int vertsSaved;     /* vértices únicos NUNCA processados             */
+    int vertsDone;      /* vértices únicos processados                   */
+} hglCcbStats;
+
+hglCcbMesh *hglCcbBuild(const hglVertex *verts, int nVerts,
+                        const uint32_t *indices, int nIndex,
+                        int maxPatchTris);
+void        hglCcbDestroy(hglCcbMesh *mesh);
+int         hglCcbPatchCount(const hglCcbMesh *mesh);
+void        hglDrawCcbMesh(hglCtx *ctx, hglCcbMesh *mesh,
+                           const hglVertex *verts);
+void        hglCcbLastStats(const hglCtx *ctx, hglCcbStats *out);
+
 #ifdef __cplusplus
 }
 #endif

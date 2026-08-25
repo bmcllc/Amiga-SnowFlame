@@ -9,6 +9,28 @@
 #include "hotice/hgl.h"
 
 #define HI_TILE 32 /* tile 32x32, como no dossiê */
+#define HI_CCB_EPS 1e-3f /* tolerância do teste de frustum por patch (CCB) */
+
+/* patch topológico do CCB: fatia contígua do buffer de índices reordenado */
+typedef struct {
+    uint32_t first, count;     /* range de triângulos em hglCcbMesh::idx   */
+} HiCcbPatch;
+
+/* definição completa aqui (internal.h): testes inspecionam os patches;
+   a API pública só enxerga o typedef opaco.                              */
+struct hglCcbMesh {
+    uint32_t *idx;             /* índices reordenados por patch            */
+    int nIdx;
+
+    HiCcbPatch *patches;
+    int nPatches, capPatches;
+
+    float (*bbox)[6];          /* model-space: minx,miny,minz,maxx,maxy,maxz */
+    float (*centroid)[3];
+    float (*coneAxis)[3];      /* eixo do cone de normais (unitário)       */
+    float *coneSin;            /* sin(θ); ≥1.0 ⇒ nunca culle por backface  */
+    int   *nUniqueVerts;
+};
 
 enum { HI_FMT_RGBA8 = 0, HI_FMT_HIQTC = 1, HI_FMT_HIQTC_P8 = 2 };
 
@@ -111,6 +133,10 @@ struct hglCtx {
 
     /* estatísticas */
     int statsTrisIn, statsTrisOut;
+
+    /* CCB — contadores da última hglDrawCcbMesh */
+    int ccbPatches, ccbRejFrustum, ccbRejBackface;
+    int ccbVertsSaved, ccbVertsDone;
 };
 
 /* --- hiqtc.c --- */
