@@ -11,7 +11,7 @@
 
 static inline uint8_t *sys_test_addr_ptr(SysState *s, uint32_t addr)
 {
-    if (addr >= SYS_ADDR_MAIN_BASE && addr < SYS_ADDR_MAIN_BASE + SYS_MAIN_RAM_SIZE)
+    if ((addr - SYS_ADDR_MAIN_BASE) < SYS_MAIN_RAM_SIZE)
         return &s->main_ram[addr - SYS_ADDR_MAIN_BASE];
     return NULL;
 }

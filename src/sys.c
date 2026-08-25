@@ -49,15 +49,15 @@ void sys_destroy(SysState *s)
  * ===================================================================== */
 static inline int sys_addr_in_main(uint32_t addr)
 {
-    return (addr >= SYS_ADDR_MAIN_BASE && addr < SYS_ADDR_MAIN_BASE + SYS_MAIN_RAM_SIZE);
+    return (addr - SYS_ADDR_MAIN_BASE) < SYS_MAIN_RAM_SIZE;
 }
 static inline int sys_addr_in_vram(uint32_t addr)
 {
-    return (addr >= SYS_ADDR_VRAM_BASE && addr < SYS_ADDR_VRAM_BASE + SYS_VRAM_SIZE);
+    return (addr - SYS_ADDR_VRAM_BASE) < SYS_VRAM_SIZE;
 }
 static inline int sys_addr_in_aram(uint32_t addr)
 {
-    return (addr >= SYS_ADDR_ARAM_BASE && addr < SYS_ADDR_ARAM_BASE + SYS_ARAM_SIZE);
+    return (addr - SYS_ADDR_ARAM_BASE) < SYS_ARAM_SIZE;
 }
 static inline uint8_t *sys_addr_ptr(SysState *s, uint32_t addr)
 {

@@ -1,11 +1,31 @@
-# Hot-ice — Renderizador de referência (C99)
+# SnowFlame — Console Amiga hipotético (1999)
 
-Implementação da GPU **Hot-ice** (arquitetura *Homotopia*, MontêLauro)
-descrita em `../../Hot-ice-gpu-dossie.md`, como biblioteca C99 sem dependências
-externas + API convencional estilo OpenGL (**HGL**) + suíte de testes +
-demos que gravam PNG.
+Projeto completo do console fictício **SnowFlame**: análise de viabilidade,
+dossiês de hardware e implementação de referência em C99 da GPU **Hot-ice**
+(arquitetura *Homotopia*, MontêLauro) com as unidades de CPU **MLVU/MAPU**
+do ColdFire **V4æ**.
 
-## Status
+## Estrutura
+
+```
+.
+├── README.md                  ← este arquivo
+├── doc/                       ← dossiês e análise
+│   ├── ColdFire-V4ae-cpu-dossie.md          ← CPU V4æ + MLVU + MAPU
+│   ├── Hot-ice-gpu-dossie.md                ← GPU Hot-ice (Homotopia)
+│   └── SnowFlame-analise-de-viabilidade.md  ← viabilidade v2.1
+├── include/hotice/            ← APIs públicas
+│   ├── types.h                ← mat4, vetores, hiQuat (versores MLVU)
+│   ├── hgl.h                  ← API HGL estilo OpenGL imediato
+│   ├── mapu.h                 ← MAPU física analítica Q16.16
+│   └── sys.h                  ← simulador barramento/DMA V4æ
+├── src/                       ← implementação C99
+├── tests/                     ← suíte de testes (65 verificações)
+├── demos/                     ← 8 demos verificáveis (gravam PNG)
+└── Makefile
+```
+
+## Status do hardware implementado
 
 | Componente do dossiê | Estado | Onde |
 |---|---|---|
@@ -18,18 +38,19 @@ demos que gravam PNG.
 | Mipmaps + filtragem trilinear analítica | ✅ | `src/texture.c` |
 | Depth 24 bits + stencil 8 (word por amostra `(z24<<8)|st`) | ✅ | `raster.c` |
 | Clipping homogêneo no near (Sutherland–Hodgman) | ✅ | `hde.c` |
-| API HGL (matrizes, texturas, stencil, stats, PNG out) | ✅ | `include/hotice/hgl.h` |
-| HDE: T&L — DOT3 bump (normal map, luz por pixel) | ✅ | `raster.c`, `hde.c` |
+| DOT3 bump (normal map, luz por pixel) | ✅ | `raster.c`, `hde.c` |
 | Env map esférico (sphere map via normal view-space) | ✅ | `raster.c`, `hde.c` |
-| MAPU — Unidade de Física Analítica (CORDIC, ATAN2, EXP2/LOG2, ROOT2, RAYSP/TEVNT/TRAJC/SPRG) | ✅ | `src/mapu.c`, `include/hotice/mapu.h` |
-| Testes automatizados | ✅ **57/57** | `tests/test_main.c` |
+| Versores hiQuat (rotação, slerp, mat4) — espelho das ops MLVU | ✅ | `include/hotice/types.h` |
+| **MAPU** física analítica — microcódigo **Q16.16 fixo**: CORDIC 16 iter (CSINC/ATAN2), EXP2/LOG2 (LUT 256 + interp), sqrt Newton-Raphson, ROOT2, RAYSP/RAYPL/RAYBB, TRAJC, TEVNT, SPRG | ✅ | `src/mapu.c`, `include/hotice/mapu.h` |
+| **Simulador V4æ** — CPU @266 MHz, MLVU (VADD/VROT/VLERP/VMUL), MAPU, GPU @143 MHz, DMA 4 canais round-robin 64-bit @133 MHz | ✅ | `src/sys.c`, `include/hotice/sys.h` |
+| Testes automatizados | ✅ **65/65** (57 renderizador+MAPU · 8 sistema) | `tests/` |
 
-## Build
+## Build & execução
 
 ```sh
-make            # lib + testes
+make            # lib + 8 demos + test_all
 ./build/test_all
-make run-demos  # gera build/demo0{1..4}.png
+make run-demos  # roda todas as demos (geram PNG em build/)
 ```
 
 ## Demos
@@ -43,33 +64,28 @@ make run-demos  # gera build/demo0{1..4}.png
 | `demo05_shading` | bump ON/OFF + esfera cromada env map | tons parede 5 → 81 (luz por pixel) |
 | `demo06_hiqtc_p8` | RGBA8 × HIQTC-4:1 × HIQTC-P8 | baseline 138 dB · HIQTC 38.4 dB · P8 33.2 dB |
 | `demo07_mapu` | projétil TRAJC vs esfera (RAYSP) + chão (TEVNT) | t_chao=1.618s · hit esfera dt=3.895 → acerto |
-| `demo02_hiqtc` | mesma cena RGBA8 vs HIQTC lado a lado | PSNR impresso ≈ 34.2 dB |
-| `demo03_mipmap` | campo distante sem mip vs trilinear | Laplaciano médio 131 → 62 (~2.1× mais suave) |
-| `demo04_reflection` | reflexão planar via stencil multipasse intra-frame | centróides obj/refl ≈ iguais; reflexo confinado ao espelho |
+| `demo08_skinning_physics` | personagem 2 ossos (skinning MLVU/HDE) + projétil TRAJC + colisão RAYSP/TEVNT + mola SPRG | 300 frames integrando animação esquelética e física analítica |
 
 ## Decisões documentadas
 
 - **Regra de preenchimento top-left** real (`HI_EDGE_OK`): elimina rachaduras E
   repintadas em arestas compartilhadas sem depender do teste de depth.
-- **Estado de stencil congelado por draw** na submissão (como a textura):
-  multipasse funciona dentro de um frame trocando o estado entre draws.
-  Depth/stencil reiniciam dos valores de clear a cada `FrameBegin`
-  (equivalente a "limpar todo frame", padrão comum em consoles).
+- **Estado congelado por draw** na submissão (stencil, texturas, bump/env,
+  luz): multipasse funciona dentro de um frame trocando o estado entre draws.
+  Depth/stencil reiniciam dos valores de clear a cada `FrameBegin`.
 - **Luz**: `hglLightDirf` recebe o vetor **apontando para a luz**, em espaço
-  da câmera (transforme a direção do mundo pela rotação da view).
-  Iluminação é Gouraud (por vértice), como o HDE propõe.
+  da câmera. Iluminação é Gouraud (por vértice), como o HDE propõe.
 - **Mipmaps**: cadeia box-filter RGBA8; trilinear com derivadas analíticas
   de tela sobre varyings pré-divididos.
-- Simplificações conhecidas: normais não recebem a model matrix separada
-  (iluminação assume espaço câmera já composto); sem backface culling.
-- CPU SnowFlame: ColdFire V4æ (V4e Amiga Enhanced) com unidades MontêLauro
-  MLVU (vetores · versores · ponto fixo quantizado) e MAPU (física analítica).
-  Ver `../../../cpu/ColdFire-V4ae-cpu-dossie.md` (raiz do projeto SnowFlame).
-- MAPU implementado como referência host (ponto flutuante) validando a especificação
-  Q16.16 do dossiê V4æ; a versão fixa determinística é descrita no microcode
-  do MAPU (CORDIC 16 iterações, aritmética saturada).
+- **MAPU Q16.16 bit-exato**: sem ponto flutuante — CORDIC 16 iterações com
+  LUT atan(2^-i) em turns, LOG2 via tabela 256 entradas + interpolação linear,
+  EXP2 Taylor grau 3, aritmética saturada estilo MAC/EMAC do V4e. Determinístico
+  entre builds.
+- **Simplificações conhecidas**: normais não recebem a model matrix separada;
+  sem backface culling; simulador é funcional (não ciclo-exato).
 
 ## Próximos passos (roadmap)
 
-DOT3 bump por texel · env map cúbico · modo paleta HIQTC 8:1 ·
-texturas ≥512² · modelo DMA/barramento → simulador do sistema ColdFire V4æ.
+CCB completo (culling por continuidade real) · env map cúbico ·
+texturas ≥512² · VMAT4/VSKIN completos no simulador MLVU ·
+perfilador de barramento (largura de banda por subsistema).

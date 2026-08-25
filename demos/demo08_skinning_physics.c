@@ -127,13 +127,18 @@ typedef struct {
 } Projectile;
 
 static Projectile g_proj;
-static MapuScalar g_spring_x, g_spring_v;
+static MapuScalar g_spring_x;
 static MapuScalar g_time_accum = 0;
+
+/* Mola: forma fechada com tempo CUMULATIVO (sem erro acumulado) */
+static MapuScalar g_spring_t;                 /* tempo total da mola      */
+static const MapuScalar SPR_X0 = MAPU_ONE/4;  /* 0.25                     */
+static const MapuScalar SPR_V0 = MAPU_ONE*2;  /* 2.0                      */
 
 static void spawn_projectile(void)
 {
     g_proj.pos = mapu_v3f(0, 2, -5);
-    g_proj.vel = mapu_v3f(0, 0, mapu_f2q(10.0));
+    g_proj.vel = mapu_v3f(0, 0, 10.0);
     g_proj.life = mapu_f2q(5.0);
     g_proj.active = 1;
 }
@@ -143,39 +148,62 @@ static void update_physics(MapuScalar dt)
     g_time_accum += dt;
 
     if (g_proj.active) {
+        /* Gravidade na velocidade (analítica por frame); posição avança em
+           forma fechada (TRAJC) e a colisão usa corda do passo — sem túnel,
+           pois |vel|·dt ≈ 0.17 << r=1.5.                                  */
         MapuVec3 g = mapu_v3f(0, -9.8, 0);
-        MapuVec3 new_pos = mapu_trajc_q16(g_proj.pos, g_proj.vel, g, dt);
-        
-        /* Colisão com esfera (RAYSP) */
-        MapuRay ray = { g_proj.pos, g_proj.vel };
         MapuSphere sp = { mapu_v3f(0, 0, 0), mapu_f2q(1.5) };
-        MapuVec3 hit_n;
-        MapuScalar hit_t = mapu_ray_sphere_q16(ray, sp, &hit_n);
-        if (hit_t >= 0 && mapu_q2f(hit_t) < mapu_q2f(dt)) {
-            MapuScalar dot = mapu_mul(g_proj.vel.x, hit_n.x) +
-                             mapu_mul(g_proj.vel.y, hit_n.y) +
-                             mapu_mul(g_proj.vel.z, hit_n.z);
-            g_proj.vel.x -= mapu_mul(mapu_f2q(2.0), mapu_mul(dot, hit_n.x));
-            g_proj.vel.y -= mapu_mul(mapu_f2q(2.0), mapu_mul(dot, hit_n.y));
-            g_proj.vel.z -= mapu_mul(mapu_mul(mapu_f2q(2.0), dot), hit_n.z);
-            new_pos = g_proj.pos;
+        MapuScalar remain = dt;
+        int bounces = 0;
+
+        g_proj.vel.y += mapu_mul(g.y, dt);
+
+        while (mapu_q2f(remain) > 1e-4 && bounces < 4) {
+            MapuRay ray = { g_proj.pos, g_proj.vel };
+            MapuScalar hit_t = mapu_ray_sphere_q16(ray, sp, NULL);
+
+            if (hit_t >= 0 && mapu_q2f(hit_t) <= mapu_q2f(remain)) {
+                /* 1) avança exatamente até a superfície */
+                g_proj.pos = mapu_trajc_q16(g_proj.pos, g_proj.vel,
+                                            mapu_v3f(0, 0, 0), hit_t);
+
+                /* 2) reflexão especular v' = v - 2(v·n)n */
+                MapuVec3 n;
+                mapu_ray_sphere_q16(ray, sp, &n);
+                {
+                    MapuScalar dot = mapu_mul(g_proj.vel.x, n.x) +
+                                     mapu_mul(g_proj.vel.y, n.y) +
+                                     mapu_mul(g_proj.vel.z, n.z);
+                    MapuScalar k = mapu_mul(mapu_f2q(-2.0), dot);
+                    g_proj.vel.x += mapu_mul(k, n.x);
+                    g_proj.vel.y += mapu_mul(k, n.y);
+                    g_proj.vel.z += mapu_mul(k, n.z);
+                }
+
+                remain -= hit_t;
+                bounces++;
+            } else {
+                /* nenhum impacto neste sub-passo: avança o restante */
+                g_proj.pos = mapu_trajc_q16(g_proj.pos, g_proj.vel, g, remain);
+                remain = 0;
+            }
+
+            /* chão com quique amortecido */
+            if (mapu_q2f(g_proj.pos.y) < 0.5f) {
+                g_proj.pos.y = mapu_f2q(0.5);
+                g_proj.vel.y = -mapu_mul(g_proj.vel.y, mapu_f2q(0.5));
+            }
         }
-        
-        /* Colisão com chão (TEVNT) */
-        if (mapu_q2f(new_pos.y) < 0.5f) {
-            new_pos.y = mapu_f2q(0.5);
-            g_proj.vel.y = -mapu_mul(g_proj.vel.y, mapu_f2q(0.5));
-        }
-        
-        g_proj.pos = new_pos;
+
         g_proj.life -= dt;
         if (mapu_q2f(g_proj.life) <= 0) g_proj.active = 0;
     }
 
-    /* Mola (SPRG) */
-    g_spring_x = mapu_sprg_q16(g_spring_x, g_spring_v, 
+    /* Mola (SPRG): avaliação analítica no tempo total — estável por construção */
+    g_spring_t += dt;
+    g_spring_x = mapu_sprg_q16(SPR_X0, SPR_V0,
                                mapu_f2q(10.0), mapu_f2q(1.0),
-                               mapu_f2q(0.3), dt);
+                               mapu_f2q(0.3), g_spring_t);
 }
 
 static void draw_character(hglCtx *ctx, float angle_y, float bend)
@@ -343,7 +371,7 @@ int main(void)
     hglBindTexture(ctx, 0, tex);
     
     spawn_projectile();
-    g_spring_x = 0; g_spring_v = mapu_f2q(2.0);
+    g_spring_x = SPR_X0; g_spring_t = 0;  /* CI da mola: x0=0.25, v0=2.0 */
     
     MapuScalar frame_dt = MAPU_ONE / 60;
     float angle = 0, bend = 0;
@@ -387,8 +415,13 @@ int main(void)
     printf("Demo08: frames=%d\n", frame);
     printf("  Projétil final: (%.2f, %.2f, %.2f) ativo=%d\n",
            mapu_q2f(g_proj.pos.x), mapu_q2f(g_proj.pos.y), mapu_q2f(g_proj.pos.z), g_proj.active);
-    printf("  Mola: x=%.3f v=%.3f\n", mapu_q2f(g_spring_x), mapu_q2f(g_spring_v));
+    printf("  Mola: x=%.3f (t=%.2fs)\n", mapu_q2f(g_spring_x), mapu_q2f(g_spring_t));
     printf("  Tempo simulado: %.2fs\n", mapu_q2f(g_time_accum));
+    
+    /* Grava frame final (personagem + cena) */
+    if (!hglSavePNG(ctx, "build/demo08.png")) {
+        printf("  demo08.png gravado\n");
+    }
     
     hglTexDestroy(tex);
     hglDestroyContext(ctx);
