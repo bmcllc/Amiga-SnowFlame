@@ -1,9 +1,11 @@
-# SnowFlame (1999) — Análise de Viabilidade Técnica e Comercial · **v2**
+# SnowFlame (1999) — Análise de Viabilidade Técnica e Comercial · **v2.2**
 
 **Console hipotético da Amiga, 6ª geração**
 Especificação: ColdFire V4æ @ 266 MHz · **GPU MontêLauro Hot-ice (arquitetura Homotopia) @ 143 MHz** · 20 MB RAM · 8 MB VRAM · 2 MB ARAM · DSP 32 canais 32-bit 48,1 kHz · UDVD + CD-ROM 12× · 2× Memory Cards de 16 MB · controle digital + analógico de 4 eixos.
 
-> **v2** — substitui a Voodoo3 2000 pela GPU própria da MontêLauro, modelo **Hot-ice**. O dossiê completo da arquitetura Homotopia está em `gpu/Hot-ice-gpu-dossie.md`. O apêndice A preserva as conclusões da v1 que motivaram a troca.
+> **v2.1** — substitui a Voodoo3 2000 pela GPU própria da MontêLauro, modelo **Hot-ice**. O dossiê completo da arquitetura Homotopia está em `doc/Hot-ice-gpu-dossie.md`. O apêndice A preserva as conclusões da v1 que motivaram a troca.
+>
+> **v2.2** — as teses centrais desta análise agora têm **implementação de referência executável** no próprio repositório: renderizador C99 da Hot-ice (`src/`, 76 verificações), microcódigo Q16.16 do MAPU bit-exato (`src/mapu.c`), simulador funcional do barramento/DMA do V4æ (`src/sys.c`) e **9 demos com métricas** — incluindo o CCB medindo **72% de vértices poupados** (acima da faixa 40–60% prevista). Índice completo: `README.md`.
 
 ---
 
@@ -58,7 +60,7 @@ Os mesmos ~500 DMIPS que antes afogavam em multiplicação de matriz agora sobra
 > quantizado — alimenta o HDE) e **MAPU** (física analítica em forma fechada
 > — colisão contínua, trajetórias e eventos resolvidos exatamente, em Q16.16).
 > Especialização em vez de clock mantém o die barato sem enfraquecer o
-> console. Detalhes, instruções e riscos: ver **`cpu/ColdFire-V4ae-cpu-dossie.md`**.
+> console. Detalhes, instruções e riscos: ver **`doc/ColdFire-V4ae-cpu-dossie.md`**.
 
 **Veredito:** ✅ adequado no novo papel de orquestrador. O casamento ColdFire (streams fix-point) + HDE (matemática pesada) é coerente e barato.
 
@@ -118,7 +120,8 @@ Orçamento aproximado do barramento @ 30 fps:
   Fetch de texturas (cache miss tiles)  ~35–45%
   Scanout + atualizações                ~10–15%
 Margem: apertada — exige malhas indexadas
-com conectividade (CCB corta 40–60% dos vértices)
+com conectividade (CCB corta 40–60% dos vértices;
+a referência C99 mede 72% na cena-tipo)
 e texturas HIQTC sempre que possível.
 ```
 
@@ -202,7 +205,7 @@ O único cenário de morte real. Sem drivers maduros no dia 1, o catálogo Glide
 
 ## Apêndice A — Herança da v1 (configuração Voodoo3 2000)
 
-A análise original (`v1`) concluiu que a Voodoo3 2000 era tecnicamente charmosa e estrategicamente insustentável: cor 16-bit forçada, texturas máx. 256², zero compressão/stencil/DOT3/T&L, W-buffer 16-bit — e o risco fatal do colapso da 3dfx (ativos vendidos à NVIDIA em dez/2000). O gargalo sistêmico era o par desequilibrado CPU-fraco ↔ GPU-sem-T&L, com o rasterizador ocioso a ~30%. Essas seis feridas foram o roteiro de requisitos que a arquitetura Homotopia resolveu um a um (ver `gpu/Hot-ice-gpu-dossie.md`, §7).
+A análise original (`v1`) concluiu que a Voodoo3 2000 era tecnicamente charmosa e estrategicamente insustentável: cor 16-bit forçada, texturas máx. 256², zero compressão/stencil/DOT3/T&L, W-buffer 16-bit — e o risco fatal do colapso da 3dfx (ativos vendidos à NVIDIA em dez/2000). O gargalo sistêmico era o par desequilibrado CPU-fraco ↔ GPU-sem-T&L, com o rasterizador ocioso a ~30%. Essas seis feridas foram o roteiro de requisitos que a arquitetura Homotopia resolveu um a um (ver `doc/Hot-ice-gpu-dossie.md`, §7).
 
 ---
 

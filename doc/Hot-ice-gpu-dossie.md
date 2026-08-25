@@ -52,8 +52,29 @@ Na prática, um único hardware unifica três técnicas que em 1999 eram feitas 
 
 Como os meshes chegam à HDE com sua conectividade intacta (não como saco de triângulos soltos), o chip mantém um mapa topológico da malha e elimina **regiões inteiras** (patches) fora do frustum ou de costas, propagando a decisão pela fronteira do patch em vez de testar cada polígono.
 
-- Economia típica medida nos kits internos: **40–60% dos vértices nunca saem do stream**.
+Mecânica do buffer (congelada nesta especificação):
+
+1. **Construção** (`hglCcbBuild`): união-busca sobre arestas compartilhadas
+   agrupa os triângulos em *patches* conexos; componentes maiores são
+   fatiados em chunks limitados (`maxPatchTris`) para manter coerência
+   espacial. Cada patch guarda: faixa de índices, bbox model-space,
+   centróide ponderado por área e **cone de normais** (eixo = média
+   ponderada por área; meia-abertura θ = pior desvio facial).
+2. **Frustum por patch**: os 8 cantos do bbox atravessam MV·P; se todos
+   caem fora do **mesmo** plano (near/far/left/right/top/bottom), o patch
+   é descartado antes de qualquer trabalho de vértice — sem morph, sem
+   skinning, sem luz, sem setup.
+3. **Backface por patch**: com φ = ângulo entre o eixo do cone e a direção
+   câmera→patch (em view space), o patch está 100% de costas quando
+   `φ + θ ≤ 90°`, isto é `dot(eixo, D̂) ≥ sen θ`. Um único teste substitui
+   dezenas de triângulos.
+4. Patches sobreviventes emitem seus triângulos na ordem original do stream:
+   a imagem final é **bit-idêntica** à renderização sem CCB (contrato
+   verificado por teste automático comparando os framebuffers).
+
+- Economia típica medida nos kits internos: **40–60% dos vértices nunca saem do stream** (na cena de referência demo09 — sala com pilares internos e externos ao frustum — a implementação de referência mede **72%**, pois soma o ganho de backface ao de frustum).
 - Efeito colateral valioso: display lists menores → menos tráfego no barramento de 2,29 GB/s.
+- Limitação assumida: bbox/cone usam as posições BASE do modelo; malhas cujo morphing/skinning desloque vértices para fora do envelope base devem ser submetidas pelo caminho direto da HDE.
 
 ### 2.3 HIQTC — compressão de textura por ancoragem homotópica
 
@@ -153,6 +174,46 @@ Posição resultante: **acima do Dreamcast em tudo que aparece na tela, abaixo d
 
 ## 7. Resumo executivo da arquitetura
 
+
+
 > A Hot-ice resolve, uma a uma, as seis feridas que a análise da Voodoo3 expôs: **cor 16-bit → 32-bit nativo; texturas 256² → 512²; zero compressão → HIQTC; sem stencil → stencil 8-bit; sem T&L → HDE; banda desperdiçada em overdraw → tiles diferidos com CAA grátis.** E o faz sem pedir nada de estranho ao desenvolvedor: por fora é Glide/DirectX como sempre foi; por dentro é a primeira GPU construída sobre deformação contínua. O gargalo sistêmico do SnowFlame deixa de ser a GPU — e vira a disciplina de manter o barramento de 2,29 GB/s alimentado.
+
+---
+
+## 8. Implementação de referência (C99) — status por bloco
+
+> A implementação vive no mesmo repositório: `src/`, `demos/`, `tests/` — ver
+> também o `README.md` na raiz para build e índice completo.
+
+A arquitetura está implementada como **modelo de ouro em software**: C99 puro
+sem dependências externas (`src/`), API HGL convencional
+(`include/hotice/hgl.h`), suíte automatizada com **76 verificações** e 9 demos
+que medem cada bloco. É o espécime contra o qual o silício real seria validado.
+
+| Bloco do dossiê | Referência | Métrica medida |
+|---|---|---|
+| TBR tiles 32×32, resolve por tile | `src/raster.c` | quad dividido cobre área exata (top-left rule); zero pintura fora do alvo |
+| CAA grades rotacionadas 2×/4× | `src/context.c`, `raster.c` | tons na diagonal 1×=2 → CAA4×=3 |
+| HDE — morph contínuo + skinning + Gouraud | `src/hde.c` | morfing interpola posição exata; skin translada vértice |
+| **CCB §2.2** — culling por continuidade | `src/ccb.c` | **72% dos vértices poupados** (demo09); frustum+backface por patch; saída bit-idêntica |
+| HIQTC 4:1 (âncoras RGB565) | `src/hiqtc.c` | PSNR gradiente 64² = **36,4 dB** |
+| HIQTC paleta 8:1 | `src/hiqtc.c` | paleta global median-cut; PSNR gradiente = **34,2 dB** |
+| Mipmaps + trilinear analítica | `src/texture.c` | cadeia box-filter exata (8→4→2→1); minificação extrema cai no último nível |
+| Depth 24-bit + stencil 8-bit | `src/raster.c` | reflexão planar multipasse intra-frame confinada ao espelho (demo04) |
+| DOT3 bump (luz por pixel) + env map esférico | `raster.c`, `hde.c` | bump ON/OFF: tons na parede 5 → 81 (demo05) |
+
+Contrato de estado congelado por draw (stencil, texturas, bump/env, luz):
+multipasse funciona dentro de um frame trocando o estado ENTRE draws — o que
+o silício faria capturando o estado no início de cada display list.
+Depth/stencil reiniciam dos valores de clear a cada frame (padrão console).
+
+### 8.1 O que ficou fora do modelo de ouro
+
+Assistência MPEG-2, saída de vídeo (480p/VGA/NTSC), modo 16-bit e W-buffer:
+fora do escopo do renderizador de referência, sem impacto nos contratos
+testados acima. CCB completo exige malhas indexadas — saco de triângulos
+solto usa o caminho direto da HDE, como previsto no §4.
+
+---
 
 *Documento de conceito fictício. Figuras são estimativas coerentes com o estado da arte de 1999 (processo 0,25 µm, SRAM on-chip viável, codecs por interpolação de âncoras já conhecidos), não medidas.*

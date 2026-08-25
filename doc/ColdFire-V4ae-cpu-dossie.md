@@ -93,7 +93,31 @@ EXP2.P / LOG2.P d, s    ; base-2 fixo Q16.16
 ATAN2.P d, y, x         ; ângulo Q16.16
 ```
 
-### 3.2 O que isso compra em gameplay
+### 3.2 Microcódigo Q16.16 — especificação congelada
+
+O microcódigo do MAPU está **especificado operação a operação** e implementado
+como modelo de ouro bit-exato (`src/mapu.c`, API em `include/hotice/mapu.h`).
+Todo resultado é função pura das entradas: o mesmo par de condições iniciais
+produz os mesmos 32 bits em qualquer máquina — requisito de replays e
+lock-step. Semântica fixada:
+
+| Operação | Datapath congelado |
+|---|---|
+| `CSINC` | CORDIC vetorial de **16 iterações**, LUT `atan(2^-i)` em **turns** (1.0 = 360°) |
+| `ATAN2` | CORDIC por vetorização + correção de quadrante (`x<0 ⇒ z = 1 − z`) |
+| `LOG2` | LUT de **256 entradas** sobre [0,5; 1) + interpolação linear do mantissa; atalho exato para potências de 2 |
+| `EXP2` | parte inteira por shift + Taylor grau 3 no frac (`a·ln2`, `a²/2`, `a³/6`) |
+| `√` | Newton-Raphson, 8 iterações com break antecipado por convergência |
+| `ROOT2` | discriminante `(b·b − 4·a·c) >> 16`; raízes pela divisão saturada dedicada |
+| `TRAJC` | `p₀ + v₀t + ½gt²` com `½t²` por **shift** (`>>1`), jamais divisão pelo literal Q16 de 2 (armadilha clássica de escala) |
+| `TEVNT` | reduz ao ROOT2 do eixo relevante e escolhe a menor raiz positiva |
+| `SPRG` | forma fechada sub/super/criticamente amortecida via EXP2/CSINC |
+
+Toda aritmética intermediária é int32/int64 **saturante** (herança MAC/EMAC):
+overflow satura no limite do formato em vez de contornar — falhas visíveis,
+nunca silenciosas.
+
+### 3.3 O que isso compra em gameplay
 
 - Colisão **contínua** (raio varre o movimento do frame inteiro): sem túnel
   através de paredes finas, sem substeps caros.
@@ -122,7 +146,24 @@ ATAN2.P d, y, x         ; ângulo Q16.16
   sem segunda CPU genérica para pagar.
 - **DSP 32ch** permanece soberano em áudio (ver análise §3.4).
 
-## 5. Custo: como ser barato sem ser fraco
+## 5. Simulador do sistema (modelo funcional)
+
+`src/sys.c` + `include/hotice/sys.h` modelam o fluxo de dados do console
+para validar contratos antes do silício:
+
+| Unidade | Modelo |
+|---|---|
+| Barramento | 64-bit @ 133 MHz, batidas de **64 bytes** |
+| DMA | 4 canais, round-robin, descritores encadeados (`next_desc`) |
+| MLVU | 1 instrução/ciclo: `VADD`, `VROT` (90°Y leva +X→−Z), `VLERP`, `VMUL` |
+| MAPU | fila de submissão por opcode chamando o microcódigo Q16.16 direto |
+| GPU Hot-ice | anel de comandos (1024 entradas) |
+
+Deliberadamente **não ciclo-exato** (latências unitárias): o objetivo é
+contrato funcional e ordem de grandeza de tráfego, não contagem de ciclos.
+8 verificações próprias na suíte (`tests/test_sys_funcs.c`).
+
+## 6. Custo: como ser barato sem ser fraco
 
 | Decisão | Economia | Contrapartida aceita |
 |---|---|---|
@@ -135,7 +176,7 @@ ATAN2.P d, y, x         ; ângulo Q16.16
 Resultado estimado: die na casa de **~28–35 mm²** em 0,25 µm (estimativa
 interna; números públicos do V4e servem só de referência de ordem de grandeza).
 
-## 6. Riscos
+## 7. Riscos
 
 1. **Compiladores**: tirar proveito da MLVU exige intrinsics/bibliotecas —
    mitigado pela biblioteca runtime MontêLauro (mesmos tipos do renderizador
@@ -144,6 +185,16 @@ interna; números públicos do V4e servem só de referência de ordem de grandez
    numericamente podem estranhar solução fechada — documentar receitas.
 3. **Licença Motorola/Veio**: dependência de fornecimento — dual-source
    planejado para 2001.
+
+## 8. Implementação de referência — status
+
+| Bloco | Referência | Verificação medida |
+|---|---|---|
+| MAPU microcódigo Q16.16 (§3) | `src/mapu.c`, `include/hotice/mapu.h` | 20 verificações: CSINC 0°/45°/90° exatos, ATAN2 por quadrante, LOG2/EXP2 inversos, ROOT2 {2,3}, TRAJC y(1s)=5,1, TEVNT t=2v₀/g, RAYSP dt≈4 + normal −x, SPRG decai a ~0 |
+| Versores MLVU (espelho software) | `include/hotice/types.h` (`hiQuat`) | rotação 90°Y leva +X→−Z; mat4 do versor = rotate_y; slerp médio de ±90°X = identidade |
+| Simulador V4æ (§5) | `src/sys.c` | DMA memcpy, MLVU VADD/VLERP/VROT, submissão MAPU CSINC@45° e TRAJC, anel GPU — 8/8 |
+| Integração HDE+MAPU | `demos/demo08_skinning_physics.c` | personagem 2 ossos (skinning) + projétil TRAJC com colisão contínua RAYSP + mola SPRG com tempo cumulativo: 300 frames estáveis, mola assenta em x≈0,005 após 5 s |
+| Física em jogo | `demos/demo07_mapu.c` | chão em t=1,618 s · acerto de esfera com dt=3,895 |
 
 ---
 *Documento fictício integrante do projeto SnowFlame. Características do V4e
